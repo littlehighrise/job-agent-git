@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class RemoteStatus(StrEnum):
@@ -12,6 +12,11 @@ class RemoteStatus(StrEnum):
     HYBRID = "hybrid"
     ONSITE = "onsite"
     UNKNOWN = "unknown"
+
+
+class PreferenceMode(StrEnum):
+    PREFERENCE = "preference"
+    HARD_REQUIREMENT = "hard_requirement"
 
 
 class ATS(StrEnum):
@@ -26,6 +31,14 @@ class Classification(StrEnum):
     REJECT = "REJECT"
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
     AUTO_APPLY_ELIGIBLE = "AUTO_APPLY_ELIGIBLE"
+
+
+class RequirementMatchStatus(StrEnum):
+    SUPPORTED = "SUPPORTED"
+    PARTIALLY_SUPPORTED = "PARTIALLY_SUPPORTED"
+    TRANSFERABLE = "TRANSFERABLE"
+    UNSUPPORTED = "UNSUPPORTED"
+    CONTRADICTED = "CONTRADICTED"
 
 
 class QuestionType(StrEnum):
@@ -112,9 +125,11 @@ class SearchPreferences(BaseModel):
     target_titles: list[str]
     title_variations: dict[str, list[str]] = Field(default_factory=dict)
     preferred_remote_statuses: list[RemoteStatus] = Field(default_factory=lambda: [RemoteStatus.REMOTE])
+    remote_preference_mode: PreferenceMode = PreferenceMode.PREFERENCE
     allowed_countries: list[str] = Field(default_factory=lambda: ["United States"])
     minimum_compensation_usd: int | None = None
     excluded_industries: list[str] = Field(default_factory=list)
+    excluded_industries_are_hard: bool = True
     preferred_industries: list[str] = Field(default_factory=list)
     prefer_individual_contributor: bool = True
     polling_interval_minutes: int = 60
@@ -177,6 +192,34 @@ class EvidenceMatch(BaseModel):
     evidence_ids: list[str]
     explanation: str
     confidence: int
+    statement_ids: list[str] = Field(default_factory=list)
+
+
+class RequirementEvaluation(BaseModel):
+    requirement: str
+    category: str
+    is_hard_requirement: bool
+    status: RequirementMatchStatus
+    confidence: int
+    matched_evidence_statement_ids: list[str] = Field(default_factory=list)
+    matched_experience_ids: list[str] = Field(default_factory=list)
+    explanation: str
+    weight: float
+    blocks_auto_apply: bool = False
+    blocks_application_consideration: bool = False
+
+
+class ScoreBreakdown(BaseModel):
+    title_alignment: int
+    requirement_coverage: int
+    hard_requirement_coverage: int
+    preferred_qualification_alignment: int
+    industry_domain_alignment: int
+    work_arrangement_alignment: int
+    ic_management_alignment: int
+    weighted_requirement_points: float
+    weighted_requirement_possible: float
+    formula: str
 
 
 class MatchAnalysis(BaseModel):
@@ -185,6 +228,14 @@ class MatchAnalysis(BaseModel):
     evidence_confidence_score: int
     application_risk_score: int
     classification: Classification
+    requirement_evaluations: list[RequirementEvaluation] = Field(default_factory=list)
+    auto_apply_blockers: list[str] = Field(default_factory=list)
+    review_concerns: list[str] = Field(default_factory=list)
+    score_breakdown: ScoreBreakdown | None = None
+    title_score: int = 0
+    requirement_coverage_score: int = 0
+    preference_alignment_score: int = 0
+    final_classification_rationale: list[str] = Field(default_factory=list)
     matched_requirements: list[EvidenceMatch] = Field(default_factory=list)
     unsupported_requirements: list[str] = Field(default_factory=list)
     contradicted_requirements: list[str] = Field(default_factory=list)

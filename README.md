@@ -53,6 +53,28 @@ It then:
    - `audit.json`
 5. Writes `applications/review_queue.json`.
 
+
+## Deterministic matching foundation
+
+The matcher intentionally stays deterministic in this slice. It now evaluates each requirement into a structured status: `SUPPORTED`, `PARTIALLY_SUPPORTED`, `TRANSFERABLE`, `UNSUPPORTED`, or `CONTRADICTED`. Each evaluation records the original requirement text, category, hard-requirement flag, confidence, matched evidence statement IDs, matched experience IDs, explanation, weight, automatic-application blockers, and absolute application blockers.
+
+Matching uses phrase-level concept normalization before token fallback. The built-in concept groups cover design systems, Figma, engineering collaboration, component standardization, product design, accessibility, responsive design, React engineering, ML engineering, and security clearance language. This is deliberately easy to extend in `src/job_agent/matching.py`.
+
+Weighted scoring is inspectable and favors hard requirement coverage over soft preferences. The current formula is:
+
+```text
+final role score =
+  title alignment * 0.22
+  + weighted explicit requirement coverage * 0.32
+  + hard requirement coverage * 0.18
+  + preferred qualification alignment * 0.08
+  + industry/domain alignment * 0.08
+  + work-arrangement alignment * 0.07
+  + IC/management alignment * 0.05
+```
+
+Preferred qualifications cannot compensate for absolute blockers such as an excluded hard industry, unsupported required clearance, prior application, country mismatch, or a contradicted explicit hard requirement. Unsupported hard requirements usually block automatic application rather than immediately rejecting the job, so a strong-but-imperfect match can still enter human review.
+
 ## Tests
 
 ```bash
