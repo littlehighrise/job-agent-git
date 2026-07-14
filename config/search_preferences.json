@@ -1,0 +1,15 @@
+{
+  "target_titles": ["Senior Product Designer", "Lead Product Designer", "Staff Product Designer", "Principal Product Designer", "Senior UX Designer", "Senior UI/UX Designer", "Design Systems Lead", "Product Design Lead", "UX Engineer"],
+  "title_variations": {"Senior Product Designer": ["Sr. Product Designer", "Lead Product Designer", "Staff Product Designer"]},
+  "preferred_remote_statuses": ["remote"],
+  "allowed_countries": ["United States"],
+  "minimum_compensation_usd": 120000,
+  "excluded_industries": ["defense"],
+  "preferred_industries": ["product", "SaaS", "AI/ML", "consumer technology", "music technology", "automotive", "entertainment"],
+  "prefer_individual_contributor": true,
+  "polling_interval_minutes": 60,
+  "review_threshold": 75,
+  "auto_apply_threshold": 92,
+  "evidence_confidence_threshold": 85,
+  "sources": [{"type": "local_json", "path": "data/sample_jobs/jobs.json"}]
+}

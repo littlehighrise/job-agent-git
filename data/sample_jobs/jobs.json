@@ -1,0 +1,68 @@
+[
+  {
+    "source": "sample_local",
+    "source_job_id": "northstar-sr-product-designer",
+    "employer": "Northstar SaaS",
+    "job_title": "Senior Product Designer, Design Systems",
+    "canonical_job_title": "Senior Product Designer",
+    "job_title_variations": ["Sr. Product Designer", "Design Systems Product Designer"],
+    "seniority": "senior",
+    "employment_type": "full-time",
+    "location": "Remote - United States",
+    "country": "United States",
+    "remote_status": "remote",
+    "salary_min": 135000,
+    "salary_max": 170000,
+    "currency": "USD",
+    "industry": "SaaS",
+    "description": "Lead design systems work for a remote SaaS product team using Figma and component libraries.",
+    "responsibilities": ["Partner with engineers to standardize reusable components", "Maintain Figma libraries and documentation"],
+    "explicit_requirements": [
+      {"text": "5+ years of product or UX design experience", "requirement_type": "explicit", "category": "experience", "is_hard_requirement": true},
+      {"text": "Hands-on Figma design systems experience", "requirement_type": "explicit", "category": "skill", "is_hard_requirement": true},
+      {"text": "Experience partnering with engineers on component standardization", "requirement_type": "explicit", "category": "skill", "is_hard_requirement": true}
+    ],
+    "inferred_preferences": [
+      {"text": "Angular component library familiarity", "requirement_type": "inferred", "category": "technology", "is_hard_requirement": false}
+    ],
+    "required_technologies": ["Figma"],
+    "preferred_technologies": ["Angular"],
+    "required_years_experience": 5,
+    "management_expectations": "Individual contributor role with cross-functional leadership.",
+    "domain_experience_expectations": ["SaaS", "design systems"],
+    "education_requirements": [],
+    "security_clearance_requirements": [],
+    "travel_requirements": "Minimal",
+    "date_posted": "2026-07-10",
+    "application_url": "https://example.com/jobs/northstar-sr-product-designer",
+    "ats_type": "local_json"
+  },
+  {
+    "source": "sample_local",
+    "source_job_id": "aegis-defense-react-ml",
+    "employer": "Aegis Defense Systems",
+    "job_title": "React Machine Learning UI Engineer",
+    "canonical_job_title": "UX Engineer",
+    "location": "On-site - Virginia",
+    "country": "United States",
+    "remote_status": "onsite",
+    "salary_min": 115000,
+    "salary_max": 118000,
+    "currency": "USD",
+    "industry": "defense",
+    "description": "Build React interfaces for machine learning defense systems. Active clearance required.",
+    "explicit_requirements": [
+      {"text": "React development experience", "requirement_type": "explicit", "category": "technology", "is_hard_requirement": true},
+      {"text": "Machine learning engineering experience", "requirement_type": "explicit", "category": "technology", "is_hard_requirement": true},
+      {"text": "Active security clearance", "requirement_type": "explicit", "category": "clearance", "is_hard_requirement": true}
+    ],
+    "inferred_preferences": [],
+    "required_technologies": ["React"],
+    "preferred_technologies": [],
+    "required_years_experience": 3,
+    "security_clearance_requirements": ["active clearance"],
+    "date_posted": "2026-07-11",
+    "application_url": "https://example.com/jobs/aegis-defense-react-ml",
+    "ats_type": "local_json"
+  }
+]

@@ -1,0 +1,45 @@
+[
+  {
+    "experience_id": "caci_design_system",
+    "employer": "CACI International",
+    "role": "Senior UX Designer",
+    "start_date": "2021-01-01",
+    "end_date": "present",
+    "responsibilities": ["Led UX work for complex Angular-based product environments", "Administered Figma design resources"],
+    "skills": ["product design", "UX design", "design systems", "Figma", "cross-functional collaboration"],
+    "technologies": ["Angular", "PrimeNG", "Tailwind", "Figma"],
+    "industries": ["enterprise software"],
+    "accomplishments": ["Standardized component usage patterns", "Created or worked with Tailwind design token concepts"],
+    "allowed_claims": ["design system leadership", "component standardization", "cross-functional UX leadership", "individual contributor product design"],
+    "prohibited_claims": ["React development", "machine learning engineering", "people management"],
+    "source_note": "Seed evidence provided by project owner; verify details before real applications.",
+    "seniority_evidence": true,
+    "management_evidence": false,
+    "individual_contributor_evidence": true,
+    "evidence": [
+      {
+        "statement_id": "caci_figma_admin",
+        "text": "Administered company Figma environment and supported reusable design resources.",
+        "skills": ["design systems", "Figma"],
+        "technologies": ["Figma"],
+        "allowed_claims": ["Figma administration", "design system operations"],
+        "source_note": "Seed evidence; verify before external use.",
+        "seniority_evidence": true
+      },
+      {
+        "statement_id": "caci_primeng_standardization",
+        "text": "Standardized PrimeNG component usage in an Angular product environment.",
+        "skills": ["component standardization", "UX design"],
+        "technologies": ["Angular", "PrimeNG"],
+        "allowed_claims": ["component standardization", "Angular product UX"]
+      },
+      {
+        "statement_id": "caci_tailwind_tokens",
+        "text": "Created or worked with Tailwind design token concepts.",
+        "skills": ["design tokens", "design systems"],
+        "technologies": ["Tailwind"],
+        "allowed_claims": ["design token collaboration"]
+      }
+    ]
+  }
+]
