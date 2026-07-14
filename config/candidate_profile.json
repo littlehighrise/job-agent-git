@@ -1,11 +1,11 @@
 {
-  "candidate_id": "bob_elicker",
-  "full_name": "Bob Elicker",
-  "email": "bob@example.com",
+  "candidate_id": "robert_elicker",
+  "full_name": "Robert Elicker",
+  "email": "email_me@robertelicker.com",
   "phone": null,
-  "location": "United States",
-  "portfolio_url": "https://example.com/portfolio",
-  "linkedin_url": "https://www.linkedin.com/in/example",
+  "location": "Charleston, SC, United States",
+  "portfolio_url": "https://robertelicker.com/",
+  "linkedin_url": "https://www.linkedin.com/in/bob-elicker/",
   "static_facts": {
     "work_authorization_reusable_answer": null
   }
