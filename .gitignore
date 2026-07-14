@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+job_agent.sqlite3
+applications/*
+!applications/.gitkeep
+
+src/*.egg-info/
+*.egg-info/
