@@ -239,9 +239,14 @@ def evaluate_requirement(req: JobRequirement, records: list[EvidenceRecord], pro
 
     if direct:
         statement_count = len({r.statement_id for r in direct if r.statement_id})
+        experience_count = len({r.experience_id for r in direct})
         status = RequirementMatchStatus.SUPPORTED
-        confidence = min(98, 72 + statement_count * 8 + len({r.experience_id for r in direct}) * 4)
-        explanation = "Direct normalized concept/technology match to verified evidence statements."
+        if statement_count:
+            confidence = min(98, 76 + statement_count * 7 + experience_count * 3)
+            explanation = "Direct normalized concept/technology match to verified evidence statements."
+        else:
+            confidence = min(74, 62 + experience_count * 6)
+            explanation = "Direct normalized concept/technology match only to broad experience-level evidence; statement-level support is not verified."
     elif partial:
         status = RequirementMatchStatus.PARTIALLY_SUPPORTED
         confidence = min(78, 45 + len({r.statement_id for r in partial if r.statement_id}) * 6)
@@ -330,19 +335,52 @@ def _coverage(evaluations: list[RequirementEvaluation], only_hard: bool | None =
 
 
 def _evidence_confidence(evaluations: list[RequirementEvaluation]) -> int:
-    supported = [e for e in evaluations if e.status in {RequirementMatchStatus.SUPPORTED, RequirementMatchStatus.PARTIALLY_SUPPORTED, RequirementMatchStatus.TRANSFERABLE}]
-    possible = sum(e.weight for e in supported)
+    possible = sum(e.weight for e in evaluations)
     if possible == 0:
         return 0
     adjusted = 0.0
-    for e in supported:
+    for e in evaluations:
         quality = e.confidence
-        if not e.matched_evidence_statement_ids:
-            quality -= 18
-        if e.status == RequirementMatchStatus.TRANSFERABLE:
-            quality -= 15
+        if e.status == RequirementMatchStatus.UNSUPPORTED:
+            quality = 10
+        elif e.status == RequirementMatchStatus.CONTRADICTED:
+            quality = 0
+        elif e.status == RequirementMatchStatus.TRANSFERABLE:
+            quality = min(quality, 58)
+        elif e.status == RequirementMatchStatus.PARTIALLY_SUPPORTED:
+            quality = min(quality, 72)
+        elif e.status == RequirementMatchStatus.SUPPORTED and not e.matched_evidence_statement_ids:
+            quality = min(quality, 68)
         adjusted += max(0, quality) * e.weight
     return round(adjusted / possible)
+
+
+def _application_risk(evaluations: list[RequirementEvaluation], absolute_blockers: list[str], review_concerns: list[str], evidence_confidence: int) -> int:
+    if absolute_blockers:
+        return min(100, 70 + (len(absolute_blockers) - 1) * 10)
+    risk = 0
+    if any(e.status == RequirementMatchStatus.CONTRADICTED for e in evaluations):
+        risk = max(risk, 85)
+    unsupported_hard = [e for e in evaluations if e.is_hard_requirement and e.status == RequirementMatchStatus.UNSUPPORTED]
+    transferable_hard = [e for e in evaluations if e.is_hard_requirement and e.status == RequirementMatchStatus.TRANSFERABLE]
+    partial_hard = [e for e in evaluations if e.is_hard_requirement and e.status == RequirementMatchStatus.PARTIALLY_SUPPORTED]
+    unsupported_soft = [e for e in evaluations if not e.is_hard_requirement and e.status == RequirementMatchStatus.UNSUPPORTED]
+    if unsupported_hard:
+        risk = max(risk, 38 + min(22, (len(unsupported_hard) - 1) * 8))
+    if transferable_hard:
+        risk = max(risk, 24 + min(16, (len(transferable_hard) - 1) * 5))
+    if partial_hard:
+        risk = max(risk, 14 + min(12, (len(partial_hard) - 1) * 4))
+    risk += min(12, len(unsupported_soft) * 3)
+    non_auto_concerns = [c for c in review_concerns if not c.startswith("Auto-apply blocker")]
+    risk += min(16, len(non_auto_concerns) * 6)
+    if evidence_confidence < 50:
+        risk += 24
+    elif evidence_confidence < 65:
+        risk += 12
+    elif evidence_confidence < 78:
+        risk += 5
+    return min(100, risk)
 
 
 def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], prefs: SearchPreferences, job: JobPosting, already_applied: bool = False) -> MatchAnalysis:
@@ -381,7 +419,7 @@ def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], p
         + ic_management * 0.05
     )
     evidence_confidence = _evidence_confidence(evaluations)
-    risk = min(100, len(absolute_blockers) * 40 + len([e for e in evaluations if e.status == RequirementMatchStatus.UNSUPPORTED]) * 15 + len(review_concerns) * 8 + max(0, 80 - evidence_confidence))
+    risk = _application_risk(all_evaluations, absolute_blockers, review_concerns, evidence_confidence)
 
     auto_apply_blockers = [c for c in review_concerns if c.startswith("Auto-apply blocker")]
     if absolute_blockers:

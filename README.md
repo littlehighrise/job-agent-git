@@ -188,3 +188,23 @@ The workflow discovers and scores jobs only. It does **not** submit applications
 Live boards can change or become inaccessible. A company may move away from Greenhouse, block access, return malformed data, or have no currently listed jobs. Individual source failures are reported separately in the summary and artifact metadata; they are warnings unless the application itself fails to parse configuration, create the database, run the CLI, or complete the automated tests. Zero discovered jobs is reported clearly and should not be treated as proof that the matcher produced live recommendations.
 
 This manually triggered workflow is intentionally separate from any future scheduled hourly discovery workflow.
+
+## Score calibration and reporting
+
+The matcher produces three separate numbers:
+
+- **Role match score** ranks apparent fit for review. It combines title alignment, explicit requirement coverage, hard-requirement coverage, preference alignment, domain signals, work arrangement, and IC/management alignment. The formula is stored in each `analysis.json` score breakdown.
+- **Evidence confidence** estimates how strongly verified candidate evidence supports the evaluated requirements. It now includes unsupported and contradicted explicit requirements in the denominator, caps transferable and partial support below direct statement-level support, and treats broad experience-only matches as lower-confidence than direct verified evidence statements. Multiple direct evidence statements can raise confidence; generic overlap alone should not.
+- **Application risk** estimates the risk of submitting an inaccurate, poorly supported, or unsuitable application. It is intentionally not a duplicate of role score or evidence confidence. Absolute blockers such as excluded hard industries, unsupported required clearance, country mismatch, prior application, or contradicted hard requirements produce high risk and rejection. A single unsupported hard requirement blocks auto-apply but does not by itself force maximum risk when the role otherwise remains reviewable. Minor preferred gaps add little or no risk.
+
+A high role match score therefore does **not** automatically mean a job is safe to auto-apply. `AUTO_APPLY_ELIGIBLE` remains intentionally rare: the role score must meet the auto-apply threshold, evidence confidence must meet the configured confidence threshold, there must be no auto-apply blockers, and application risk must remain low. `REVIEW_REQUIRED` is a valid calibrated outcome for strong roles that need human judgment, missing facts, or more precise evidence review.
+
+To create a reproducible calibration report from a downloaded live-validation database or another persisted discovery database, run:
+
+```bash
+job-agent report-calibration --db validation.sqlite3 --output-json calibration-report.json --output-markdown calibration-report.md --top-n 20
+```
+
+The report selects the highest-ranked persisted jobs, preserves the normalized job snapshot and score breakdown, lists supported/unsupported/contradicted/transferable requirements, records matched blocker and review-concern context, and summarizes role-score, evidence-confidence, application-risk, and classification distributions. If no database is present at the requested path, the command writes an explicit empty report instead of implying that live jobs were reviewed.
+
+Calibration should use downloaded live-validation artifacts when available. If artifacts are unavailable, use fixture-based checks only and state that no live artifact data was inspected. Scoring changes should be made only when supported by observed requirement/evidence behavior, not to manufacture more `AUTO_APPLY_ELIGIBLE` jobs.

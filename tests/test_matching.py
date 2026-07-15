@@ -160,3 +160,58 @@ def test_defense_react_ml_job_rejected():
     assert analysis.classification == Classification.REJECT
     assert analysis.hard_constraint_violations
     assert analysis.contradicted_requirements
+
+
+def test_multiple_direct_evidence_statements_produce_high_confidence():
+    evaluation = eval_req("Hands-on design systems and design tokens experience")
+    assert evaluation.status == RequirementMatchStatus.SUPPORTED
+    assert len(evaluation.matched_evidence_statement_ids) >= 2
+    assert evaluation.confidence >= 90
+
+
+def test_experience_only_support_has_lower_confidence_than_statement_support():
+    evaluation = eval_req("enterprise software", category="domain", hard=False)
+    assert evaluation.status == RequirementMatchStatus.PARTIALLY_SUPPORTED
+    assert evaluation.matched_experience_ids
+    assert not evaluation.matched_evidence_statement_ids
+    assert evaluation.confidence <= 72
+
+
+def test_minor_soft_gap_does_not_create_extreme_application_risk():
+    profile, evidence, prefs, jobs = fixtures()
+    job = jobs[0].model_copy(update={
+        "inferred_preferences": [JobRequirement(text="Startup experience preferred", requirement_type="inferred", category="preference")],
+        "preferred_technologies": [],
+    })
+    analysis = match_job(profile, evidence, prefs, job)
+    assert analysis.application_risk_score < 25
+    assert analysis.classification == Classification.REVIEW_REQUIRED
+
+
+def test_unsupported_hard_requirement_blocks_auto_without_extreme_risk_or_rejection():
+    profile, evidence, prefs, jobs = fixtures()
+    job = jobs[0].model_copy(update={
+        "explicit_requirements": [*jobs[0].explicit_requirements, JobRequirement(text="Required expertise in Kubernetes administration", requirement_type="explicit", category="required_technology", is_hard_requirement=True)],
+        "required_technologies": ["Figma"],
+    })
+    analysis = match_job(profile, evidence, prefs, job)
+    assert any("Kubernetes" in blocker for blocker in analysis.auto_apply_blockers)
+    assert 35 <= analysis.application_risk_score < 70
+    assert analysis.classification == Classification.REVIEW_REQUIRED
+
+
+def test_absolute_blocker_remains_high_risk_rejection():
+    profile, evidence, prefs, jobs = fixtures()
+    analysis = match_job(profile, evidence, prefs, jobs[1])
+    assert analysis.classification == Classification.REJECT
+    assert analysis.application_risk_score >= 70
+
+
+def test_people_management_role_mismatch_lowers_ranking_and_adds_review_concern():
+    profile, evidence, prefs, jobs = fixtures()
+    manager_job = jobs[0].model_copy(update={"job_title": "Product Design Manager", "management_expectations": "People manager role with direct reports; manage a team of designers."})
+    staff_job = jobs[0].model_copy(update={"job_title": "Staff Product Designer", "management_expectations": "Individual contributor role with cross-functional leadership."})
+    manager = match_job(profile, evidence, prefs, manager_job)
+    staff = match_job(profile, evidence, prefs, staff_job)
+    assert manager.score_breakdown.ic_management_alignment < staff.score_breakdown.ic_management_alignment
+    assert any("people-management" in c for c in manager.review_concerns)
