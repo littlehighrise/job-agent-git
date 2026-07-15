@@ -5,6 +5,7 @@ from pathlib import Path
 import typer
 
 from job_agent.audit import audit_resume
+from job_agent.calibration import build_calibration_report, report_to_markdown
 from job_agent.io import load_model, load_model_list, write_json
 from job_agent.live_validation import SourceResult
 from job_agent.matching import match_job
@@ -154,6 +155,19 @@ def show(job_id: str, db: Path = Path("job_agent.sqlite3")):
     if analysis.review_concerns: typer.echo(f"Review concerns: {'; '.join(analysis.review_concerns)}")
     if analysis.final_classification_rationale: typer.echo(f"Rationale: {'; '.join(analysis.final_classification_rationale)}")
     typer.echo(f"Artifacts: {row.get('artifact_dir') or 'none'}")
+
+
+@app.command("report-calibration")
+def report_calibration(db: Path = Path("job_agent.sqlite3"), output_json: Path = Path("calibration-report.json"), output_markdown: Path = Path("calibration-report.md"), top_n: int = 20):
+    """Create a reproducible calibration report from a persisted validation database."""
+    report = build_calibration_report(db, top_n=top_n)
+    write_json(output_json, report)
+    output_markdown.parent.mkdir(parents=True, exist_ok=True)
+    output_markdown.write_text(report_to_markdown(report))
+    if not report["artifact_available"]:
+        typer.echo(f"No validation database found at {db}; wrote an empty calibration report.")
+    else:
+        typer.echo(f"Wrote calibration report for {report['selected_count']} of {report['jobs_available']} jobs.")
 
 
 @app.command()

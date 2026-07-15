@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from job_agent.calibration import build_calibration_report, report_to_markdown
 from job_agent.io import load_model_list
 from job_agent.live_validation import SourceResult, create_preferences, parse_board_tokens, summarize, to_markdown
 from job_agent.models import JobPosting, MatchAnalysis
@@ -71,3 +72,21 @@ def test_empty_summary_is_explicit(tmp_path):
     assert summary["discovered"] == 0
     markdown = to_markdown(summary)
     assert "No jobs were discovered" in markdown
+
+
+def test_calibration_report_from_validation_database(tmp_path):
+    db = _persist_sample_jobs(tmp_path)
+    report = build_calibration_report(db, top_n=1)
+    assert report["artifact_available"] is True
+    assert report["selected_count"] == 1
+    assert report["score_distributions"]["role_match_score"]["count"] == 2
+    markdown = report_to_markdown(report)
+    assert "Job Matching Calibration Report" in markdown
+    assert "Selected jobs" in markdown
+
+
+def test_calibration_report_is_explicit_when_database_missing(tmp_path):
+    report = build_calibration_report(tmp_path / "missing.sqlite3")
+    assert report["artifact_available"] is False
+    assert report["selected_count"] == 0
+    assert "No validation database" in report_to_markdown(report)
