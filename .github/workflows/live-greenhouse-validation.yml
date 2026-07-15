@@ -1,0 +1,97 @@
+name: Live Greenhouse Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      board_tokens:
+        description: Comma-separated Greenhouse board tokens to validate
+        required: true
+        default: figma,notion,discord,datadog,webflow
+      minimum_compensation_usd:
+        description: Minimum compensation target in USD
+        required: true
+        default: '120000'
+      remote_preference_mode:
+        description: Remote preference mode from search preferences
+        required: true
+        type: choice
+        options:
+          - preference
+          - hard_requirement
+        default: preference
+      max_boards:
+        description: Maximum number of board tokens to process as a safety limit
+        required: true
+        default: '10'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-live-greenhouse:
+    name: Validate live Greenhouse discovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install project and development dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e '.[dev]'
+
+      - name: Run automated tests
+        run: pytest
+
+      - name: Prepare live-validation paths
+        run: mkdir -p live-validation/applications live-validation/logs
+
+      - name: Create temporary live-validation search configuration
+        run: >-
+          python -m job_agent.live_validation create-config
+          --base config/search_preferences.json
+          --output live-validation/search_preferences.live.json
+          --board-tokens '${{ inputs.board_tokens }}'
+          --minimum-compensation-usd '${{ inputs.minimum_compensation_usd }}'
+          --remote-preference-mode '${{ inputs.remote_preference_mode }}'
+          --max-boards '${{ inputs.max_boards }}'
+
+      - name: Run live Greenhouse discovery and deterministic matching
+        run: >-
+          job-agent discover
+          --preferences live-validation/search_preferences.live.json
+          --db live-validation/validation.sqlite3
+          --output live-validation/applications
+          --source-results live-validation/source-results.json
+          2>&1 | tee live-validation/logs/discovery.log
+
+      - name: Generate validation summary
+        run: |
+          python -m job_agent.live_validation summarize \
+            --db live-validation/validation.sqlite3 \
+            --source-results live-validation/source-results.json \
+            --output-json live-validation/live-validation-summary.json \
+            --output-markdown live-validation/live-validation-summary.md
+          cat live-validation/live-validation-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload validation artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: greenhouse-live-validation-results
+          path: |
+            live-validation/live-validation-summary.json
+            live-validation/live-validation-summary.md
+            live-validation/source-results.json
+            live-validation/validation.sqlite3
+            live-validation/search_preferences.live.json
+            live-validation/applications/**
+            live-validation/logs/**
+          if-no-files-found: warn
+          retention-days: 14
