@@ -215,3 +215,42 @@ def test_people_management_role_mismatch_lowers_ranking_and_adds_review_concern(
     staff = match_job(profile, evidence, prefs, staff_job)
     assert manager.score_breakdown.ic_management_alignment < staff.score_breakdown.ic_management_alignment
     assert any("people-management" in c for c in manager.review_concerns)
+
+
+def test_empty_requirements_are_not_perfect_coverage_or_auto_apply():
+    profile, evidence, prefs, jobs = fixtures()
+    prefs.review_threshold = 50
+    prefs.auto_apply_threshold = 50
+    prefs.evidence_confidence_threshold = 0
+    job = jobs[0].model_copy(update={
+        "explicit_requirements": [],
+        "inferred_preferences": [],
+        "required_technologies": [],
+        "required_years_experience": None,
+        "parsing_quality": "INSUFFICIENT",
+    })
+    analysis = match_job(profile, evidence, prefs, job)
+    assert analysis.requirement_coverage_score == 0
+    assert analysis.score_breakdown.weighted_requirement_possible == 0
+    assert analysis.evidence_confidence_score == 0
+    assert analysis.classification != Classification.AUTO_APPLY_ELIGIBLE
+    assert "Insufficient parsed qualification data for confident automated evaluation." in analysis.review_concerns
+
+
+def test_actual_evidence_matching_after_greenhouse_html_parsing():
+    from job_agent.sources.greenhouse import parse_greenhouse_description
+    profile, evidence, prefs, jobs = fixtures()
+    html = """<p><strong>What You’ll Do:</strong></p><ul><li>Partner with engineering teams to design complex technical products.</li></ul><p><strong>Who You Are:</strong></p><ul><li>You have 10+ years of experience in digital product design.</li><li>Experience with developer platforms, observability, infrastructure, or technical domains.</li><li>Research experience and cross-functional engineering collaboration.</li></ul>"""
+    parsed = parse_greenhouse_description(html)
+    job = jobs[0].model_copy(update={
+        "source_job_id": "datadog-style",
+        "job_title": "Staff Product Designer, APM",
+        "description": html,
+        **parsed,
+    })
+    analysis = match_job(profile, evidence, prefs, job)
+    assert analysis.requirement_evaluations
+    assert analysis.evidence_confidence_score > 0
+    assert any("10+ years" in e.requirement for e in analysis.requirement_evaluations)
+    assert analysis.requirement_coverage_score < 100
+    assert analysis.classification != Classification.AUTO_APPLY_ELIGIBLE

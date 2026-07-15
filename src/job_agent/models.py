@@ -33,6 +33,13 @@ class Classification(StrEnum):
     AUTO_APPLY_ELIGIBLE = "AUTO_APPLY_ELIGIBLE"
 
 
+class ParsingQuality(StrEnum):
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    INSUFFICIENT = "INSUFFICIENT"
+
+
 class RequirementMatchStatus(StrEnum):
     SUPPORTED = "SUPPORTED"
     PARTIALLY_SUPPORTED = "PARTIALLY_SUPPORTED"
@@ -185,6 +192,7 @@ class JobPosting(BaseModel):
     date_discovered: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     application_url: str
     ats_type: ATS = ATS.GENERIC
+    parsing_quality: ParsingQuality = ParsingQuality.HIGH
 
 
 class EvidenceMatch(BaseModel):

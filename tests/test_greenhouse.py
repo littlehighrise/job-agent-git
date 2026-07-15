@@ -103,3 +103,62 @@ def test_repeated_discovery_queue_approve_reject(tmp_path):
     assert "No application was submitted" in approve.output
     reject = runner.invoke(app, ["reject", "aegis-defense-react-ml", "--db", str(db)])
     assert reject.exit_code == 0
+
+DATADOG_STYLE_HTML = """
+<p><strong>What You’ll Do:</strong></p>
+<ul>
+  <li>Partner with engineering teams to design complex technical products.</li>
+  <li>Use systems thinking to improve observability workflows.</li>
+</ul>
+<p><strong>Who You Are:</strong></p>
+<ul>
+  <li>You have 10+ years of experience in digital product design.</li>
+  <li>Experience designing complex technical products.</li>
+  <li>Experience with developer platforms, observability, infrastructure, or technical domains.</li>
+  <li>Research experience and cross-functional engineering collaboration.</li>
+</ul>
+<p><strong>Preferred Qualifications:</strong></p>
+<ul><li>Bonus points for Figma experience.</li></ul>
+<p><strong>Benefits:</strong></p>
+<ul><li>Medical, dental, and vision benefits.</li></ul>
+<p>We encourage you to apply even if you do not meet every qualification.</p>
+<p>The reasonably estimated yearly salary for this role at Datadog is:<br>$204,000 — $255,000 USD</p>
+<p>Equal opportunity employer. Privacy notice.</p>
+"""
+
+
+def test_greenhouse_html_strong_paragraph_headings_and_lists():
+    parsed = parse_greenhouse_description(DATADOG_STYLE_HTML)
+    assert parsed["responsibilities"] == [
+        "Partner with engineering teams to design complex technical products.",
+        "Use systems thinking to improve observability workflows.",
+    ]
+    req_texts = [r.text for r in parsed["explicit_requirements"]]
+    assert "You have 10+ years of experience in digital product design." in req_texts
+    assert "Experience designing complex technical products." in req_texts
+    assert len(req_texts) >= 4
+    assert all("Medical" not in text for text in req_texts)
+    assert all("encourage you to apply" not in text.lower() for text in req_texts)
+    assert parsed["required_years_experience"] == 10
+    assert parsed["salary_min"] == 204000
+    assert parsed["salary_max"] == 255000
+    assert parsed["currency"] == "USD"
+    assert parsed["parsing_quality"] == "HIGH"
+    assert [r.text for r in parsed["inferred_preferences"]] == ["Bonus points for Figma experience."]
+    assert parsed["required_technologies"] == []
+    assert parsed["preferred_technologies"] == ["Figma"]
+
+
+def test_greenhouse_adapter_preserves_raw_description_and_extracts_country(monkeypatch):
+    def fake_urlopen(req, timeout):
+        return FakeResponse(payload([{
+            "id": 456, "title": "Staff Product Designer", "absolute_url": "https://boards.greenhouse.io/datadog/jobs/456",
+            "location": {"name": "Tel Aviv, Israel"}, "updated_at": "2026-07-01T00:00:00Z", "content": DATADOG_STYLE_HTML,
+        }]))
+    monkeypatch.setattr("job_agent.sources.greenhouse.urlopen", fake_urlopen)
+    job = GreenhouseSourceAdapter("datadog", company="Datadog").fetch_jobs()[0]
+    assert job.description == DATADOG_STYLE_HTML
+    assert job.country == "Israel"
+    assert job.required_years_experience == 10
+    assert job.salary_min == 204000
+    assert job.explicit_requirements
