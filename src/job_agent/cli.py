@@ -6,6 +6,7 @@ import typer
 
 from job_agent.audit import audit_resume
 from job_agent.io import load_model, load_model_list, write_json
+from job_agent.live_validation import SourceResult
 from job_agent.matching import match_job
 from job_agent.models import CandidateProfile, Classification, ExperienceEvidence, MatchAnalysis, SearchPreferences
 from job_agent.persistence import ApplicationStore
@@ -49,6 +50,7 @@ def discover(
     preferences: Path = Path("config/search_preferences.json"),
     db: Path = Path("job_agent.sqlite3"),
     output: Path = Path("applications"),
+    source_results: Path | None = None,
 ):
     """Fetch configured sources, match new jobs, persist history, and create local review artifacts."""
     candidate, evidence_items, prefs = _load(profile, evidence, preferences)
@@ -56,14 +58,18 @@ def discover(
     rows = []
     discovered = new = rejected = review = auto = failed = 0
     seen_keys: set[tuple[str, str]] = set()
+    source_result_rows = []
     for source in prefs.sources:
         adapter_type = source.get("type")
+        board_token = str(source.get("board_token") or source.get("path") or adapter_type or "unknown")
         try:
             adapter = ADAPTERS[adapter_type](**{k: v for k, v in source.items() if k != "type"})
             jobs = adapter.fetch_jobs()
+            source_result_rows.append(SourceResult(board_token=board_token, success=True, jobs_fetched=len(jobs)).as_dict())
         except (KeyError, GreenhouseSourceError, OSError, ValueError) as exc:
             failed += 1
-            typer.echo(f"Source failed ({adapter_type}): {exc}")
+            source_result_rows.append(SourceResult(board_token=board_token, success=False, error_type=exc.__class__.__name__, error_message=str(exc)).as_dict())
+            typer.echo(f"Source failed ({adapter_type} {board_token}): {exc}")
             continue
         for job in jobs:
             key = (job.source, job.source_job_id)
@@ -87,6 +93,8 @@ def discover(
                 auto += 1
             rows.append({"employer": job.employer, "title": job.job_title, "classification": analysis.classification.value, "role_score": analysis.role_match_score, "evidence_confidence": analysis.evidence_confidence_score, "risk": analysis.application_risk_score, "already_seen": already_seen, "package": str(package_dir) if package_dir else None})
     write_json(output / "review_queue.json", rows)
+    if source_results is not None:
+        write_json(source_results, source_result_rows)
     typer.echo(f"Discovered: {discovered}")
     typer.echo(f"New: {new}")
     typer.echo(f"Rejected: {rejected}")
@@ -97,9 +105,9 @@ def discover(
 
 
 @app.command()
-def run(profile: Path = Path("config/candidate_profile.json"), evidence: Path = Path("config/career_evidence.json"), preferences: Path = Path("config/search_preferences.json"), db: Path = Path("job_agent.sqlite3"), output: Path = Path("applications")):
+def run(profile: Path = Path("config/candidate_profile.json"), evidence: Path = Path("config/career_evidence.json"), preferences: Path = Path("config/search_preferences.json"), db: Path = Path("job_agent.sqlite3"), output: Path = Path("applications"), source_results: Path | None = None):
     """Backward-compatible alias for discover."""
-    discover(profile, evidence, preferences, db, output)
+    discover(profile, evidence, preferences, db, output, source_results)
 
 
 @app.command("queue")

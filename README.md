@@ -167,3 +167,24 @@ Tests use mocked Greenhouse API responses and do not depend on live internet acc
 ## Security and boundaries
 
 Do not commit real API keys or sensitive private profile data. This slice does **not** automate applications, browser sessions, LinkedIn scraping, CAPTCHA handling, LLM calls, autonomous legal answers, attestations, or form submission. Real application automation is deferred.
+
+## Live Greenhouse Validation with GitHub Actions
+
+The repository includes a manually triggered GitHub Actions workflow named **Live Greenhouse Validation** for validating real public Greenhouse discovery and the deterministic matching pipeline outside the Codex cloud environment.
+
+To run it:
+
+1. Open the GitHub repository.
+2. Click **Actions**.
+3. Select **Live Greenhouse Validation**.
+4. Click **Run workflow**.
+5. Optionally change the comma-separated Greenhouse board-token list, minimum compensation target, remote preference mode, or maximum board limit.
+6. Run the workflow.
+7. Review the GitHub Step Summary on the workflow run page.
+8. Download the `greenhouse-live-validation-results` artifact if deeper inspection is needed.
+
+The workflow discovers and scores jobs only. It does **not** submit applications, drive a browser, call an LLM API, or require an OpenAI API key. Public Greenhouse board validation uses temporary workflow data: a generated search-preferences file, temporary SQLite database, temporary application/review artifacts, discovery logs, source-result metadata, and a machine-readable `live-validation-summary.json`.
+
+Live boards can change or become inaccessible. A company may move away from Greenhouse, block access, return malformed data, or have no currently listed jobs. Individual source failures are reported separately in the summary and artifact metadata; they are warnings unless the application itself fails to parse configuration, create the database, run the CLI, or complete the automated tests. Zero discovered jobs is reported clearly and should not be treated as proof that the matcher produced live recommendations.
+
+This manually triggered workflow is intentionally separate from any future scheduled hourly discovery workflow.
