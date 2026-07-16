@@ -73,6 +73,8 @@ def summarize(db_path: Path, source_results_path: Path, output_json: Path, outpu
         counts[row.get("classification") or ""] = counts.get(row.get("classification") or "", 0) + 1
 
     top_jobs = [_top_job(row) for row in sorted(rows, key=lambda r: (r.get("match_score") or 0, r.get("evidence_confidence") or 0), reverse=True)[:top_limit]]
+    parsing_counts = _parsing_counts(rows)
+    validation_warnings = _validation_warnings(len(rows), parsing_counts)
     summary = {
         "configured_boards": len(source_results),
         "successful_boards": [r for r in source_results if r.get("success")],
@@ -82,6 +84,12 @@ def summarize(db_path: Path, source_results_path: Path, output_json: Path, outpu
         "rejected": counts.get(Classification.REJECT.value, 0),
         "review_required": counts.get(Classification.REVIEW_REQUIRED.value, 0),
         "auto_apply_eligible": counts.get(Classification.AUTO_APPLY_ELIGIBLE.value, 0),
+        "parsing_quality_counts": parsing_counts["parsing_quality_counts"],
+        "jobs_with_explicit_requirements": parsing_counts["jobs_with_explicit_requirements"],
+        "jobs_with_responsibilities": parsing_counts["jobs_with_responsibilities"],
+        "jobs_with_requirement_evaluations": parsing_counts["jobs_with_requirement_evaluations"],
+        "jobs_with_nonzero_evidence_confidence": parsing_counts["jobs_with_nonzero_evidence_confidence"],
+        "validation_warnings": validation_warnings,
         "top_jobs": top_jobs,
     }
     write_json(output_json, summary)
@@ -99,6 +107,46 @@ def _application_rows(db_path: Path) -> list[dict[str, Any]]:
         return [dict(r) for r in conn.execute("SELECT * FROM applications").fetchall()]
     finally:
         conn.close()
+
+
+def _parsing_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    quality_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0, "INSUFFICIENT": 0}
+    explicit = responsibilities = evaluations = nonzero_confidence = 0
+    for row in rows:
+        job = json.loads(row.get("job_json") or "{}")
+        analysis = json.loads(row.get("analysis_json") or "{}")
+        quality = str(job.get("parsing_quality") or "").upper()
+        if quality in quality_counts:
+            quality_counts[quality] += 1
+        if job.get("explicit_requirements"):
+            explicit += 1
+        if job.get("responsibilities"):
+            responsibilities += 1
+        if analysis.get("requirement_evaluations"):
+            evaluations += 1
+        if (row.get("evidence_confidence") or 0) > 0 or (analysis.get("evidence_confidence_score") or 0) > 0:
+            nonzero_confidence += 1
+    return {
+        "parsing_quality_counts": quality_counts,
+        "jobs_with_explicit_requirements": explicit,
+        "jobs_with_responsibilities": responsibilities,
+        "jobs_with_requirement_evaluations": evaluations,
+        "jobs_with_nonzero_evidence_confidence": nonzero_confidence,
+    }
+
+
+def _validation_warnings(discovered: int, counts: dict[str, Any]) -> list[str]:
+    if discovered == 0:
+        return []
+    warnings: list[str] = []
+    quality_counts = counts["parsing_quality_counts"]
+    if quality_counts.get("INSUFFICIENT", 0) == discovered:
+        warnings.append("All fetched jobs have INSUFFICIENT parsing quality.")
+    if counts["jobs_with_explicit_requirements"] == 0:
+        warnings.append("Zero fetched jobs contain explicit requirements.")
+    if counts["jobs_with_requirement_evaluations"] == 0:
+        warnings.append("Zero jobs produced requirement evaluations.")
+    return warnings
 
 
 def _top_job(row: dict[str, Any]) -> dict[str, Any]:
@@ -131,7 +179,12 @@ def to_markdown(summary: dict[str, Any]) -> str:
     for item in failed:
         msg = item.get("error_message") or item.get("error_type") or "unknown error"
         lines.append(f"- ⚠️ `{item['board_token']}` failed: {_sanitize(msg)}")
-    lines.extend(["", "## Discovery Counts", "", f"- Jobs discovered: {summary['discovered']}", f"- New jobs: {summary['new']}", f"- Rejected jobs: {summary['rejected']}", f"- REVIEW_REQUIRED jobs: {summary['review_required']}", f"- AUTO_APPLY_ELIGIBLE jobs: {summary['auto_apply_eligible']}", "", "## Top Matching Jobs", ""])
+    lines.extend(["", "## Discovery Counts", "", f"- Jobs discovered: {summary['discovered']}", f"- New jobs: {summary['new']}", f"- Rejected jobs: {summary['rejected']}", f"- REVIEW_REQUIRED jobs: {summary['review_required']}", f"- AUTO_APPLY_ELIGIBLE jobs: {summary['auto_apply_eligible']}"])
+    quality = summary.get("parsing_quality_counts", {})
+    lines.extend(["", "## Parsing and Evidence Health", "", f"- HIGH parsing quality: {quality.get('HIGH', 0)}", f"- MEDIUM parsing quality: {quality.get('MEDIUM', 0)}", f"- LOW parsing quality: {quality.get('LOW', 0)}", f"- INSUFFICIENT parsing quality: {quality.get('INSUFFICIENT', 0)}", f"- Jobs with explicit requirements: {summary.get('jobs_with_explicit_requirements', 0)}", f"- Jobs with responsibilities: {summary.get('jobs_with_responsibilities', 0)}", f"- Jobs with requirement evaluations: {summary.get('jobs_with_requirement_evaluations', 0)}", f"- Jobs with non-zero evidence confidence: {summary.get('jobs_with_nonzero_evidence_confidence', 0)}"])
+    for warning in summary.get("validation_warnings", []):
+        lines.append(f"- ⚠️ {warning}")
+    lines.extend(["", "## Top Matching Jobs", ""])
     if not summary["top_jobs"]:
         lines.append("No jobs were discovered. Check source failures and board tokens before interpreting matcher coverage.")
     else:

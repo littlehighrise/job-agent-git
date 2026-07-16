@@ -6,7 +6,7 @@ from pathlib import Path
 from job_agent.calibration import build_calibration_report, report_to_markdown
 from job_agent.io import load_model_list
 from job_agent.live_validation import SourceResult, create_preferences, parse_board_tokens, summarize, to_markdown
-from job_agent.models import JobPosting, MatchAnalysis
+from job_agent.models import JobPosting, MatchAnalysis, ParsingQuality
 from job_agent.persistence import ApplicationStore
 
 
@@ -62,7 +62,14 @@ def test_summary_aggregates_mixed_source_results_and_ranks_top_jobs(tmp_path):
     assert summary["review_required"] == 1
     assert summary["rejected"] == 1
     assert summary["top_jobs"][0]["role_match_score"] >= summary["top_jobs"][1]["role_match_score"]
-    assert "SECRET_TOKEN" not in (tmp_path / "summary.md").read_text()
+    assert summary["parsing_quality_counts"]["HIGH"] == 2
+    assert summary["jobs_with_explicit_requirements"] == 2
+    assert summary["jobs_with_responsibilities"] == 1
+    assert summary["jobs_with_requirement_evaluations"] == 0
+    assert "Zero jobs produced requirement evaluations." in summary["validation_warnings"]
+    summary_md = (tmp_path / "summary.md").read_text()
+    assert "Parsing and Evidence Health" in summary_md
+    assert "SECRET_TOKEN" not in summary_md
 
 
 def test_empty_summary_is_explicit(tmp_path):
@@ -90,3 +97,23 @@ def test_calibration_report_is_explicit_when_database_missing(tmp_path):
     assert report["artifact_available"] is False
     assert report["selected_count"] == 0
     assert "No validation database" in report_to_markdown(report)
+
+
+def test_summary_warns_when_all_jobs_have_insufficient_parsing(tmp_path):
+    db = tmp_path / "validation.sqlite3"
+    store = ApplicationStore(db)
+    job = load_model_list(Path("data/sample_jobs/jobs.json"), JobPosting)[0].model_copy(update={
+        "source_job_id": "empty-live",
+        "explicit_requirements": [],
+        "responsibilities": [],
+        "parsing_quality": ParsingQuality.INSUFFICIENT,
+    })
+    analysis = MatchAnalysis(job_id=job.source_job_id, role_match_score=10, evidence_confidence_score=0, application_risk_score=80, classification="REJECT")
+    store.upsert(job, analysis, None)
+    source_results = tmp_path / "source-results.json"
+    source_results.write_text(json.dumps([SourceResult("datadog", True, jobs_fetched=1).as_dict()]))
+    summary = summarize(db, source_results, tmp_path / "summary.json", tmp_path / "summary.md")
+    assert summary["parsing_quality_counts"]["INSUFFICIENT"] == 1
+    assert "All fetched jobs have INSUFFICIENT parsing quality." in summary["validation_warnings"]
+    assert "Zero fetched jobs contain explicit requirements." in summary["validation_warnings"]
+    assert "Zero jobs produced requirement evaluations." in summary["validation_warnings"]

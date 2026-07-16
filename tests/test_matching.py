@@ -254,3 +254,23 @@ def test_actual_evidence_matching_after_greenhouse_html_parsing():
     assert any("10+ years" in e.requirement for e in analysis.requirement_evaluations)
     assert analysis.requirement_coverage_score < 100
     assert analysis.classification != Classification.AUTO_APPLY_ELIGIBLE
+
+
+def test_encoded_greenhouse_html_matching_produces_evidence_traceability():
+    from job_agent.sources.greenhouse import parse_greenhouse_description
+    profile, evidence, prefs, jobs = fixtures()
+    encoded = """&lt;p&gt;&lt;strong&gt;What You’ll Do:&lt;/strong&gt;&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Partner with engineers on design systems and component standardization.&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;strong&gt;Who You Are:&lt;/strong&gt;&lt;/p&gt;&lt;ul&gt;&lt;li&gt;You have 3+ years of product design experience.&lt;/li&gt;&lt;li&gt;Hands-on Figma design systems experience.&lt;/li&gt;&lt;li&gt;Experience partnering with engineers on component standardization.&lt;/li&gt;&lt;/ul&gt;"""
+    parsed = parse_greenhouse_description(encoded)
+    job = jobs[0].model_copy(update={
+        "source_job_id": "encoded-product-design",
+        "job_title": "Product Designer, Design Systems",
+        "description": encoded,
+        **parsed,
+    })
+    analysis = match_job(profile, evidence, prefs, job)
+    assert job.parsing_quality.value != "INSUFFICIENT"
+    assert analysis.requirement_evaluations
+    assert analysis.evidence_confidence_score > 0
+    assert analysis.classification in {Classification.REVIEW_REQUIRED, Classification.AUTO_APPLY_ELIGIBLE, Classification.REJECT}
+    assert any(e.matched_evidence_statement_ids for e in analysis.requirement_evaluations)
+    assert any("caci_figma_admin" in e.matched_evidence_statement_ids or "caci_primeng_standardization" in e.matched_evidence_statement_ids for e in analysis.requirement_evaluations)
