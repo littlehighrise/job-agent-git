@@ -18,6 +18,7 @@ from job_agent.models import (
     RequirementEvaluation,
     RequirementMatchStatus,
     ScoreBreakdown,
+    ScoreComponent,
     SearchPreferences,
 )
 from job_agent.title_matching import title_match_score
@@ -45,6 +46,10 @@ CONCEPT_GROUPS: dict[str, tuple[str, ...]] = {
     "ENGINEERING_COLLABORATION": ("developer collaboration", "engineering collaboration", "partner with engineers", "partnering with engineers", "design and engineering collaboration", "cross-functional collaboration with developers", "cross-functional collaboration"),
     "COMPONENT_STANDARDIZATION": ("component standardization", "reusable interface patterns", "standardized components", "standardized component", "component consistency", "reusable ui patterns", "standardize reusable components"),
     "PRODUCT_DESIGN": ("product design", "ux design", "ui/ux design", "interaction design"),
+    "VISUAL_CRAFT": ("visual design", "visual craft", "strong eye for visual craft", "typography", "layout", "composition", "graphic design", "visual identity", "polished interface design", "polished interface designs", "presentation design", "illustration", "branding"),
+    "FORMAL_USER_RESEARCH": ("user research", "user-centered research", "conducting research", "research methods", "research studies", "usability testing", "user interviews"),
+    "REQUIREMENTS_DISCOVERY": ("requirements analysis", "clarify requirements", "requirements discovery", "client discovery", "stakeholder discovery", "understand business problems"),
+    "RESEARCH_INFORMED_DESIGN": ("synthesizing insights", "research-informed design", "audience understanding", "user flows", "information architecture"),
     "ACCESSIBILITY": ("accessibility", "accessible design", "wcag", "inclusive design"),
     "RESPONSIVE_DESIGN": ("responsive design", "responsive web design", "mobile and responsive interfaces"),
     "REACT_ENGINEERING": ("react development", "react developer", "react engineering", "production interfaces in react", "build production interfaces in react", "professional react engineering"),
@@ -55,9 +60,11 @@ RELATED_CONCEPTS: dict[str, set[str]] = {
     "DESIGN_SYSTEMS": {"COMPONENT_STANDARDIZATION", "FIGMA", "ENGINEERING_COLLABORATION"},
     "COMPONENT_STANDARDIZATION": {"DESIGN_SYSTEMS", "ENGINEERING_COLLABORATION"},
     "ENGINEERING_COLLABORATION": {"COMPONENT_STANDARDIZATION", "DESIGN_SYSTEMS"},
-    "PRODUCT_DESIGN": {"DESIGN_SYSTEMS", "ACCESSIBILITY", "RESPONSIVE_DESIGN"},
+    "PRODUCT_DESIGN": {"DESIGN_SYSTEMS", "ACCESSIBILITY", "RESPONSIVE_DESIGN", "VISUAL_CRAFT"},
     "ACCESSIBILITY": {"PRODUCT_DESIGN", "DESIGN_SYSTEMS"},
     "RESPONSIVE_DESIGN": {"PRODUCT_DESIGN"},
+    "FORMAL_USER_RESEARCH": {"REQUIREMENTS_DISCOVERY", "RESEARCH_INFORMED_DESIGN"},
+    "RESEARCH_INFORMED_DESIGN": {"REQUIREMENTS_DISCOVERY"},
 }
 GENERIC_TOKENS = {"experience", "work", "working", "hands", "hand", "required", "preferred", "familiarity", "years", "year", "team", "role", "using", "with", "and", "the", "for", "on"}
 
@@ -131,7 +138,7 @@ def category_weight(category: str, is_hard: bool) -> float:
 def professional_design_years(evidence: list[ExperienceEvidence], today: date | None = None) -> float:
     today = today or date.today()
     intervals: list[tuple[date, date]] = []
-    qualifying = {"PRODUCT_DESIGN", "DESIGN_SYSTEMS", "FIGMA", "COMPONENT_STANDARDIZATION"}
+    qualifying = {"PRODUCT_DESIGN", "DESIGN_SYSTEMS", "FIGMA", "COMPONENT_STANDARDIZATION", "VISUAL_CRAFT"}
     for exp in evidence:
         if not exp.start_date:
             continue
@@ -280,12 +287,13 @@ def evaluate_requirement(req: JobRequirement, records: list[EvidenceRecord], pro
     )
 
 
-def _search_preference_signals(job: JobPosting, prefs: SearchPreferences) -> tuple[list[str], list[str], int, int, int]:
+def _search_preference_signals(job: JobPosting, prefs: SearchPreferences) -> tuple[list[str], list[str], int, int, int, dict[str, str]]:
     absolute_blockers: list[str] = []
     review_concerns: list[str] = []
     industry_domain = 50
-    work_arrangement = 50
+    work_arrangement = 65
     ic_management = 50
+    applicability = {"industry_domain_alignment": "unknown", "work_arrangement_alignment": "unknown", "ic_management_alignment": "unknown"}
 
     if job.country and prefs.allowed_countries and job.country not in prefs.allowed_countries:
         absolute_blockers.append(f"Country {job.country} is outside allowed countries")
@@ -299,14 +307,18 @@ def _search_preference_signals(job: JobPosting, prefs: SearchPreferences) -> tup
             review_concerns.append(message)
     if job.security_clearance_requirements:
         absolute_blockers.append("Required security clearance is present and no verified clearance evidence exists")
+    if job.industry or job.domain_experience_expectations:
+        applicability["industry_domain_alignment"] = "applicable"
     if job.industry and norm(job.industry) in {norm(i) for i in prefs.preferred_industries}:
         industry_domain += 25
     if job.domain_experience_expectations:
         industry_domain += 10
 
     if prefs.preferred_remote_statuses and job.remote_status in prefs.preferred_remote_statuses:
+        applicability["work_arrangement_alignment"] = "applicable"
         work_arrangement = 95
     elif prefs.preferred_remote_statuses and job.remote_status != RemoteStatus.UNKNOWN:
+        applicability["work_arrangement_alignment"] = "applicable"
         message = f"Work arrangement {job.remote_status.value} is outside preferred statuses"
         if prefs.remote_preference_mode == PreferenceMode.HARD_REQUIREMENT:
             absolute_blockers.append(message)
@@ -315,6 +327,8 @@ def _search_preference_signals(job: JobPosting, prefs: SearchPreferences) -> tup
             work_arrangement = 35
 
     management_text = norm(job.management_expectations or "")
+    if management_text:
+        applicability["ic_management_alignment"] = "applicable"
     people_mgmt = any(phrase in management_text for phrase in ["people manager", "manage a team", "direct reports", "line management"])
     ic_role = "individual contributor" in management_text or "cross-functional" in management_text or not management_text
     if prefs.prefer_individual_contributor and ic_role:
@@ -323,14 +337,14 @@ def _search_preference_signals(job: JobPosting, prefs: SearchPreferences) -> tup
         review_concerns.append("Role appears to include people-management expectations")
         ic_management = 30
 
-    return absolute_blockers, review_concerns, min(industry_domain, 100), work_arrangement, ic_management
+    return absolute_blockers, review_concerns, min(industry_domain, 100), work_arrangement, ic_management, applicability
 
 
-def _coverage(evaluations: list[RequirementEvaluation], only_hard: bool | None = None) -> int:
+def _coverage(evaluations: list[RequirementEvaluation], only_hard: bool | None = None) -> int | None:
     items = [e for e in evaluations if only_hard is None or e.is_hard_requirement is only_hard]
     possible = sum(e.weight for e in items)
     if possible == 0:
-        return 0
+        return None
     points = sum(e.weight * _status_points(e.status) for e in items)
     return round(points / possible * 100)
 
@@ -384,6 +398,34 @@ def _application_risk(evaluations: list[RequirementEvaluation], absolute_blocker
     return min(100, risk)
 
 
+
+ROLE_SCORE_WEIGHTS = {
+    "title_alignment": 0.22,
+    "requirement_coverage": 0.32,
+    "hard_requirement_coverage": 0.18,
+    "preferred_qualification_alignment": 0.08,
+    "industry_domain_alignment": 0.08,
+    "work_arrangement_alignment": 0.07,
+    "ic_management_alignment": 0.05,
+}
+
+def _normalized_score_components(values: dict[str, int | None], applicability: dict[str, str]) -> tuple[int, dict[str, ScoreComponent], list[str]]:
+    applicable_weight = sum(weight for name, weight in ROLE_SCORE_WEIGHTS.items() if values.get(name) is not None and applicability.get(name, "applicable") == "applicable")
+    components: dict[str, ScoreComponent] = {}
+    absent: list[str] = []
+    score = 0.0
+    for name, weight in ROLE_SCORE_WEIGHTS.items():
+        state = applicability.get(name, "applicable")
+        value = values.get(name)
+        is_applicable = value is not None and state == "applicable"
+        effective = weight / applicable_weight if is_applicable and applicable_weight else 0.0
+        contribution = (value or 0) * effective if is_applicable else 0.0
+        if not is_applicable:
+            absent.append(name)
+        components[name] = ScoreComponent(value=value, configured_weight=weight, applicable=is_applicable, applicability=state, effective_weight=round(effective, 4), contribution=round(contribution, 2), explanation=None if is_applicable else f"{name} was not scored because it is {state}.")
+        score += contribution
+    return round(score), components, absent
+
 def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], prefs: SearchPreferences, job: JobPosting, already_applied: bool = False) -> MatchAnalysis:
     del candidate
     records = build_evidence_index(evidence)
@@ -394,7 +436,7 @@ def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], p
     preference_evals = [evaluate_requirement(req, records, prohibited, design_years) for req in inferred]
     all_evaluations = evaluations + preference_evals
 
-    absolute_blockers, review_concerns, industry_domain, work_arrangement, ic_management = _search_preference_signals(job, prefs)
+    absolute_blockers, review_concerns, industry_domain, work_arrangement, ic_management, preference_applicability = _search_preference_signals(job, prefs)
     insufficient_parsing = not evaluations or job.parsing_quality in {ParsingQuality.INSUFFICIENT, ParsingQuality.LOW}
     if insufficient_parsing:
         review_concerns.append("Insufficient parsed qualification data for confident automated evaluation.")
@@ -407,21 +449,29 @@ def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], p
             review_concerns.append(f"Auto-apply blocker: {e.requirement} is {e.status.value}")
 
     title_score = title_match_score(job.job_title, prefs.target_titles, prefs.title_variations)
-    requirement_coverage = _coverage(evaluations)
+    requirement_coverage = _coverage(evaluations) or 0
     hard_coverage = _coverage(evaluations, only_hard=True)
-    preference_alignment = _coverage(preference_evals, only_hard=False) if preference_evals else 65
+    preference_alignment = _coverage(preference_evals, only_hard=False)
 
-    # Inspectable final role score formula. Explicit/hard requirements dominate; preferences can help only modestly.
-    # Contradictions and absolute blockers force REJECT later and cannot be offset by preferred qualifications.
-    role_score = round(
-        title_score * 0.22
-        + requirement_coverage * 0.32
-        + hard_coverage * 0.18
-        + preference_alignment * 0.08
-        + industry_domain * 0.08
-        + work_arrangement * 0.07
-        + ic_management * 0.05
-    )
+    component_values = {
+        "title_alignment": title_score,
+        "requirement_coverage": requirement_coverage if evaluations else None,
+        "hard_requirement_coverage": hard_coverage,
+        "preferred_qualification_alignment": preference_alignment,
+        "industry_domain_alignment": industry_domain,
+        "work_arrangement_alignment": work_arrangement,
+        "ic_management_alignment": ic_management,
+    }
+    component_applicability = {name: "applicable" for name in ROLE_SCORE_WEIGHTS}
+    component_applicability.update(preference_applicability)
+    if not evaluations:
+        component_applicability["requirement_coverage"] = "unknown"
+        component_applicability["hard_requirement_coverage"] = "unknown"
+    elif hard_coverage is None:
+        component_applicability["hard_requirement_coverage"] = "not_applicable"
+    if preference_alignment is None:
+        component_applicability["preferred_qualification_alignment"] = "not_applicable"
+    role_score, score_components, absent_dimensions = _normalized_score_components(component_values, component_applicability)
     evidence_confidence = _evidence_confidence(evaluations)
     risk = _application_risk(all_evaluations, absolute_blockers, review_concerns, evidence_confidence)
 
@@ -446,14 +496,16 @@ def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], p
     breakdown = ScoreBreakdown(
         title_alignment=title_score,
         requirement_coverage=requirement_coverage,
-        hard_requirement_coverage=hard_coverage,
-        preferred_qualification_alignment=preference_alignment,
+        hard_requirement_coverage=hard_coverage if hard_coverage is not None else 0,
+        preferred_qualification_alignment=preference_alignment if preference_alignment is not None else 0,
         industry_domain_alignment=industry_domain,
         work_arrangement_alignment=work_arrangement,
         ic_management_alignment=ic_management,
         weighted_requirement_points=round(weighted_points, 2),
         weighted_requirement_possible=round(weighted_possible, 2),
-        formula="title .22 + req .32 + hard_req .18 + preferences .08 + industry/domain .08 + work arrangement .07 + IC/management .05",
+        formula="Applicable dimensions use configured weights normalized over scored dimensions: title .22 + req .32 + hard_req .18 + preferences .08 + industry/domain .08 + work arrangement .07 + IC/management .05",
+        components=score_components,
+        absent_scoring_dimensions=absent_dimensions,
     )
     return MatchAnalysis(
         job_id=job.source_job_id,
@@ -467,7 +519,7 @@ def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], p
         score_breakdown=breakdown,
         title_score=title_score,
         requirement_coverage_score=requirement_coverage,
-        preference_alignment_score=preference_alignment,
+        preference_alignment_score=preference_alignment if preference_alignment is not None else 0,
         final_classification_rationale=rationale,
         matched_requirements=matched,
         unsupported_requirements=[e.requirement for e in evaluations if e.status == RequirementMatchStatus.UNSUPPORTED],

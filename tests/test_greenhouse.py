@@ -292,3 +292,17 @@ Requirements
     assert _texts(parsed["explicit_requirements"]) == ["Experience with Figma and product design"]
     assert parsed["salary_min"] == 100000
     assert parsed["salary_max"] == 120000
+
+
+def test_greenhouse_excludes_benefits_bullets_but_preserves_business_benefits_requirement():
+    from job_agent.sources.greenhouse import parse_greenhouse_description
+    html = """
+    <p><strong>Who You Are:</strong></p><ul>
+    <li>Generous and competitive global and US benefits</li>
+    <li>Free, global mental health benefits for employees and dependents age 6+</li>
+    <li>Ability to articulate the business benefits and technical advantages of design decisions</li>
+    </ul><p><strong>Benefits and Growth:</strong></p><ul><li>Benefits and Growth listed above may vary based on the country of your employment.</li></ul>
+    """
+    parsed = parse_greenhouse_description(html)
+    texts = [r.text for r in parsed["explicit_requirements"]]
+    assert texts == ["Ability to articulate the business benefits and technical advantages of design decisions"]
