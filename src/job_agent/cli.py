@@ -9,11 +9,12 @@ from job_agent.calibration import build_calibration_report, report_to_markdown
 from job_agent.io import load_model, load_model_list, write_json
 from job_agent.live_validation import SourceResult
 from job_agent.matching import match_job
-from job_agent.models import CandidateProfile, Classification, ExperienceEvidence, MatchAnalysis, SearchPreferences
+from job_agent.models import CandidateProfile, Classification, ExperienceEvidence, JobPosting, MatchAnalysis, SearchPreferences
 from job_agent.persistence import ApplicationStore
 from job_agent.resume.engine import build_resume_plan, build_structured_resume, render_resume_html
 from job_agent.sources import ADAPTERS
 from job_agent.sources.greenhouse import GreenhouseSourceError
+from job_agent.profile import load_candidate_profile, validate_candidate_profile
 
 app = typer.Typer(help="Local-first job search and application preparation agent.")
 
@@ -23,26 +24,42 @@ def _slug(employer: str, source_job_id: str) -> str:
 
 
 def _load(profile: Path, evidence: Path, preferences: Path):
-    return load_model(profile, CandidateProfile), load_model_list(evidence, ExperienceEvidence), load_model(preferences, SearchPreferences)
+    return load_candidate_profile(profile), load_model_list(evidence, ExperienceEvidence), load_model(preferences, SearchPreferences)
 
 
-def _write_artifacts(output: Path, job, analysis: MatchAnalysis, candidate, evidence_items) -> Path:
+def _write_discovery_artifacts(output: Path, job, analysis: MatchAnalysis) -> Path:
     package_dir = output / _slug(job.employer, job.source_job_id)
-    analysis_path = package_dir / "analysis.json"
-    if analysis_path.exists():
-        return package_dir
     write_json(package_dir / "job.json", job)
-    write_json(analysis_path, analysis)
-    if analysis.classification != Classification.REJECT:
-        plan = build_resume_plan(job, analysis)
-        resume = build_structured_resume(candidate, evidence_items, job, plan)
-        audit = audit_resume(job, evidence_items, resume)
-        write_json(package_dir / "resume_plan.json", plan)
-        write_json(package_dir / "resume.json", resume)
-        write_json(package_dir / "audit.json", audit)
-        (package_dir / "resume.html").write_text(render_resume_html(resume))
+    write_json(package_dir / "analysis.json", analysis)
     return package_dir
 
+def _application_brief(job, analysis: MatchAnalysis, resume, audit) -> str:
+    comp = f"${job.salary_min:,}-${job.salary_max:,}" if job.salary_min and job.salary_max else "Not listed"
+    supported = [r.requirement for r in analysis.requirement_evaluations if r.status in {"SUPPORTED", "PARTIALLY_SUPPORTED"}][:6]
+    gaps = analysis.unsupported_requirements[:6]
+    return "\n".join([
+        f"# Application Brief: {job.employer} — {job.job_title}", "",
+        f"- Application URL: {job.application_url}", f"- Compensation: {comp}", f"- Work arrangement: {job.remote_status}",
+        f"- Contact/profile completeness: {resume.status}", f"- Final audit status: {'PASS' if audit.passed else 'BLOCKED'}", "",
+        "## Strongest verified matches", *(f"- {s}" for s in supported), "",
+        "## Important gaps", *(f"- {g}" for g in gaps or ["No major unsupported requirements identified by matching."]), "",
+        "## Interview topics to prepare", "- Discuss design systems and reusable component work with concrete CACI examples.", "- Prepare examples of cross-functional engineering collaboration and complex workflow design.", "- Be ready to discuss any AI-product expectations conservatively and only from verified experience.",
+    ]) + "\n"
+
+def _write_preparation_package(output: Path, job, analysis: MatchAnalysis, candidate, evidence_items) -> Path:
+    package_dir = output / _slug(job.employer, job.source_job_id)
+    write_json(package_dir / "job.json", job)
+    write_json(package_dir / "analysis.json", analysis)
+    plan = build_resume_plan(job, analysis, evidence_items)
+    resume = build_structured_resume(candidate, evidence_items, job, plan)
+    audit = audit_resume(job, evidence_items, resume, candidate)
+    write_json(package_dir / "resume-plan.json", plan)
+    write_json(package_dir / "resume.json", resume)
+    write_json(package_dir / "resume-provenance.json", {"job_id": job.source_job_id, "bullets": [p.model_dump(mode="json") for exp in resume.experience for p in exp.bullet_provenance]})
+    write_json(package_dir / "audit.json", audit)
+    (package_dir / "resume.html").write_text(render_resume_html(resume))
+    (package_dir / "application-brief.md").write_text(_application_brief(job, analysis, resume, audit))
+    return package_dir
 
 @app.command()
 def discover(
@@ -84,7 +101,7 @@ def discover(
             analysis = match_job(candidate, evidence_items, prefs, job, already_applied=False)
             package_dir = None
             if not already_seen or analysis.classification != Classification.REJECT:
-                package_dir = _write_artifacts(output, job, analysis, candidate, evidence_items)
+                package_dir = _write_discovery_artifacts(output, job, analysis)
             store.upsert(job, analysis, str(package_dir) if package_dir else None)
             if analysis.classification == Classification.REJECT:
                 rejected += 1
@@ -109,6 +126,30 @@ def discover(
 def run(profile: Path = Path("config/candidate_profile.json"), evidence: Path = Path("config/career_evidence.json"), preferences: Path = Path("config/search_preferences.json"), db: Path = Path("job_agent.sqlite3"), output: Path = Path("applications"), source_results: Path | None = None):
     """Backward-compatible alias for discover."""
     discover(profile, evidence, preferences, db, output, source_results)
+
+
+@app.command()
+def prepare(job_id: str, db: Path = Path("job_agent.sqlite3"), profile: Path = Path("config/candidate_profile.local.json"), evidence: Path = Path("config/career_evidence.json"), output: Path = Path("applications"), force: bool = False):
+    """Generate a human-reviewable application package for one approved job."""
+    if not profile.exists():
+        fallback = Path("config/candidate_profile.json")
+        typer.echo(f"Profile {profile} not found; using {fallback} for draft validation.")
+        profile = fallback
+    candidate = load_candidate_profile(profile)
+    evidence_items = load_model_list(evidence, ExperienceEvidence)
+    store = ApplicationStore(db)
+    row = store.get(job_id)
+    if not row:
+        raise typer.Exit(f"Job not found: {job_id}")
+    if row.get("user_decision") != "approved" and not force:
+        raise typer.Exit("Preparation requires explicit approval; run job-agent approve <job-id> or pass --force for testing.")
+    job = JobPosting.model_validate_json(row["job_json"])
+    analysis = MatchAnalysis.model_validate_json(row["analysis_json"])
+    package_dir = _write_preparation_package(output, job, analysis, candidate, evidence_items)
+    blockers = validate_candidate_profile(candidate, submission_required=True)
+    if blockers:
+        typer.echo("Generated draft package with contact/profile blockers; do not submit.")
+    typer.echo(f"Prepared application package: {package_dir}")
 
 
 @app.command("queue")

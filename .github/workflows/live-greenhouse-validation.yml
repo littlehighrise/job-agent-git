@@ -91,7 +91,9 @@ jobs:
             live-validation/source-results.json
             live-validation/validation.sqlite3
             live-validation/search_preferences.live.json
-            live-validation/applications/**
+            live-validation/applications/**/job.json
+            live-validation/applications/**/analysis.json
+            live-validation/applications/review_queue.json
             live-validation/logs/**
           if-no-files-found: warn
           retention-days: 14

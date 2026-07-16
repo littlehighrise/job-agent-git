@@ -9,3 +9,7 @@ applications/*
 
 src/*.egg-info/
 *.egg-info/
+config/candidate_profile.local.json
+applications/*/resume.json
+applications/*/resume.html
+applications/*/resume-provenance.json
