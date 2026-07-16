@@ -335,3 +335,78 @@ def test_aegis_remains_rejected_with_restored_evidence():
     profile, evidence, prefs, jobs = fixtures()
     analysis = match_job(profile, evidence, prefs, jobs[1])
     assert analysis.classification == Classification.REJECT
+
+
+def test_no_hard_requirements_absent_dimension_not_zero_penalty():
+    profile, evidence, prefs, jobs = fixtures()
+    job = jobs[0].model_copy(update={
+        "source_job_id": "no-hard",
+        "explicit_requirements": [
+            JobRequirement(text="Experience partnering with engineers on component standardization", requirement_type="explicit", category="skill", is_hard_requirement=False),
+            JobRequirement(text="Hands-on Figma design systems experience", requirement_type="explicit", category="skill", is_hard_requirement=False),
+        ],
+        "required_technologies": [],
+        "required_years_experience": None,
+    })
+    analysis = match_job(profile, evidence, prefs, job)
+    hard = analysis.score_breakdown.components["hard_requirement_coverage"]
+    assert hard.applicability == "not_applicable"
+    assert hard.effective_weight == 0
+    assert "hard_requirement_coverage" in analysis.score_breakdown.absent_scoring_dimensions
+    assert analysis.role_match_score >= prefs.review_threshold
+
+
+def test_absent_dimension_effective_weights_sum_to_one():
+    profile, evidence, prefs, jobs = fixtures()
+    job = jobs[0].model_copy(update={"inferred_preferences": [], "preferred_technologies": [], "management_expectations": None, "industry": None, "domain_experience_expectations": []})
+    analysis = match_job(profile, evidence, prefs, job)
+    total = sum(c.effective_weight for c in analysis.score_breakdown.components.values())
+    assert 0.99 <= total <= 1.01
+    assert analysis.score_breakdown.components["preferred_qualification_alignment"].applicability == "not_applicable"
+    assert analysis.score_breakdown.components["industry_domain_alignment"].applicability == "unknown"
+
+
+def test_unknown_work_arrangement_differs_from_confirmed_mismatch():
+    profile, evidence, prefs, jobs = fixtures()
+    unknown = match_job(profile, evidence, prefs, jobs[0].model_copy(update={"remote_status": RemoteStatus.UNKNOWN}))
+    onsite = match_job(profile, evidence, prefs, jobs[0].model_copy(update={"remote_status": RemoteStatus.ONSITE}))
+    assert unknown.score_breakdown.components["work_arrangement_alignment"].applicability == "unknown"
+    assert onsite.score_breakdown.components["work_arrangement_alignment"].applicability == "applicable"
+    assert unknown.score_breakdown.work_arrangement_alignment > onsite.score_breakdown.work_arrangement_alignment
+
+
+def test_visual_craft_uses_verified_visual_evidence_but_generic_design_does_not():
+    visual = eval_req("Great attention to detail and a strong eye for visual craft, such as composition, typography, and layout.", category="skill", hard=False)
+    generic = eval_req("Design work", category="skill", hard=False)
+    assert visual.status in {RequirementMatchStatus.SUPPORTED, RequirementMatchStatus.PARTIALLY_SUPPORTED}
+    assert visual.matched_evidence_statement_ids
+    assert generic.status == RequirementMatchStatus.UNSUPPORTED
+
+
+def test_user_research_distinctions_remain_conservative():
+    formal = eval_req("Conducting formal user research studies and user interviews", category="skill", hard=False)
+    discovery = eval_req("Stakeholder discovery and requirements discovery to inform design", category="skill", hard=False)
+    assert formal.status in {RequirementMatchStatus.TRANSFERABLE, RequirementMatchStatus.PARTIALLY_SUPPORTED, RequirementMatchStatus.UNSUPPORTED}
+    assert formal.status != RequirementMatchStatus.SUPPORTED
+    assert discovery.status in {RequirementMatchStatus.SUPPORTED, RequirementMatchStatus.PARTIALLY_SUPPORTED}
+
+
+def test_representative_live_score_patterns_no_hard_requirements():
+    profile, evidence, prefs, jobs = fixtures()
+    cases = [
+        ("Staff Product Designer, APM", 100, 67, 64, 15, 65),
+        ("Staff Product Designer, Metrics", 100, 70, 68, 14, 61),
+        ("Product Designer, Design, Dev, & AI Tools", 81, 68, 60, 15, 58),
+        ("Product Designer, Growth & Monetization", 81, 68, 58, 15, 58),
+    ]
+    for title, title_score, req, _conf, _risk, old in cases:
+        values = {
+            "title_alignment": title_score, "requirement_coverage": req, "hard_requirement_coverage": None,
+            "preferred_qualification_alignment": None, "industry_domain_alignment": 50,
+            "work_arrangement_alignment": 65, "ic_management_alignment": 90,
+        }
+        from job_agent.matching import _normalized_score_components
+        new, comps, absent = _normalized_score_components(values, {"hard_requirement_coverage": "not_applicable", "preferred_qualification_alignment": "not_applicable", "industry_domain_alignment": "unknown", "work_arrangement_alignment": "unknown", "ic_management_alignment": "unknown"})
+        assert new > old
+        assert comps["hard_requirement_coverage"].effective_weight == 0
+        assert "hard_requirement_coverage" in absent

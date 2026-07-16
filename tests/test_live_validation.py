@@ -117,3 +117,20 @@ def test_summary_warns_when_all_jobs_have_insufficient_parsing(tmp_path):
     assert "All fetched jobs have INSUFFICIENT parsing quality." in summary["validation_warnings"]
     assert "Zero fetched jobs contain explicit requirements." in summary["validation_warnings"]
     assert "Zero jobs produced requirement evaluations." in summary["validation_warnings"]
+
+
+def test_summary_prefers_target_family_over_unrelated_rejected_and_adds_health_metrics(tmp_path):
+    db = tmp_path / "validation.sqlite3"
+    store = ApplicationStore(db)
+    job = load_model_list(Path("data/sample_jobs/jobs.json"), JobPosting)[0]
+    unrelated = job.model_copy(update={"source_job_id": "pm", "job_title": "Product Manager", "explicit_requirements": []})
+    target = job.model_copy(update={"source_job_id": "pd", "job_title": "Product Designer", "explicit_requirements": [r.model_copy(update={"is_hard_requirement": False}) for r in job.explicit_requirements]})
+    store.upsert(unrelated, MatchAnalysis(job_id="pm", role_match_score=99, evidence_confidence_score=80, application_risk_score=10, classification="REJECT"), None)
+    store.upsert(target, MatchAnalysis(job_id="pd", role_match_score=80, evidence_confidence_score=80, application_risk_score=10, classification="REJECT"), None)
+    source_results = tmp_path / "source-results.json"
+    source_results.write_text("[]")
+    summary = summarize(db, source_results, tmp_path / "summary.json", tmp_path / "summary.md")
+    assert summary["top_jobs"][0]["job_title"] == "Product Designer"
+    assert summary["highest_scoring_rejected_jobs"][0]["job_title"] == "Product Manager"
+    assert summary["jobs_with_zero_hard_requirements"] >= 1
+    assert "Highest-scoring Rejected Jobs" in (tmp_path / "summary.md").read_text()

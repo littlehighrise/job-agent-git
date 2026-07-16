@@ -130,7 +130,7 @@ SECTION_ALIASES = {
 }
 IGNORED_HEADING_PATTERNS = [
     re.compile(pattern, re.I) for pattern in [
-        r"^(?:our\s+)?benefits(?:\s+(?:and|&)\s+(?:growth|perks))?$",
+        r"^(?:our\s+)?benefits(?:\s+(?:and|&)\s+(?:growth|perks))?(?::.*)?$",
         r"^(?:employee\s+)?benefits$",
         r"^perks$",
         r"^what\s+we\s+offer$",
@@ -148,7 +148,7 @@ NON_QUALIFICATION_RE = re.compile(
     r"(\bRSUs?\b|\bESPP\b|stock\s+purchase\s+plan|new\s+hire\s+stock\s+equity|"
     r"health\s+insurance|dental\s+insurance|vision\s+insurance|medical,?\s+dental,?\s+(?:and\s+)?vision|"
     r"401\s*\(?k\)?|paid\s+parental\s+leave|paid\s+time\s+off|employee\s+resource\s+groups?|"
-    r"wellness\s+benefits?|commuter\s+benefits?|professional\s+development\s+benefits?|"
+    r"wellness\s+benefits?|commuter\s+benefits?|professional\s+development\s+benefits?|mental\s+health\s+benefits?|generous\s+(?:and\s+competitive\s+)?(?:global\s+and\s+us\s+|us\s+)?benefits?|benefits\s+(?:and|&)\s+growth|benefits\s+listed\s+above|"
     r"pay\s+transparency\s+disclosure|annual\s+base\s+salary\s+range|salary\s+(?:range|disclosure))",
     re.I,
 )

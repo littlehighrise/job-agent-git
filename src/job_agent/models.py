@@ -217,6 +217,16 @@ class RequirementEvaluation(BaseModel):
     blocks_application_consideration: bool = False
 
 
+class ScoreComponent(BaseModel):
+    value: int | None = None
+    configured_weight: float
+    applicable: bool = True
+    applicability: Literal["applicable", "unknown", "not_applicable"] = "applicable"
+    effective_weight: float
+    contribution: float
+    explanation: str | None = None
+
+
 class ScoreBreakdown(BaseModel):
     title_alignment: int
     requirement_coverage: int
@@ -228,6 +238,8 @@ class ScoreBreakdown(BaseModel):
     weighted_requirement_points: float
     weighted_requirement_possible: float
     formula: str
+    components: dict[str, ScoreComponent] = Field(default_factory=dict)
+    absent_scoring_dimensions: list[str] = Field(default_factory=list)
 
 
 class MatchAnalysis(BaseModel):
