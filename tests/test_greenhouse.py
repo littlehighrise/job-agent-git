@@ -246,3 +246,49 @@ def test_salary_extraction_after_entity_decoding():
     assert parsed["salary_min"] == 165000
     assert parsed["salary_max"] == 190000
     assert parsed["currency"] == "USD"
+
+
+def test_benefits_growth_pay_transparency_and_salary_excluded_from_requirements_but_salary_extracted():
+    parsed = parse_greenhouse_description("""
+<h2>Qualifications</h2>
+<ul><li>10+ years of experience in digital product design</li></ul>
+<h2>Benefits and Growth:</h2>
+<ul>
+  <li>New hire stock equity (RSUs) and employee stock purchase plan (ESPP)</li>
+  <li>Continuous professional development benefits, product training, and career pathing</li>
+  <li>Intradepartmental mentor and buddy program and employee resource groups</li>
+  <li>Health insurance, dental insurance, vision insurance, 401(k), paid parental leave, and paid time off</li>
+</ul>
+<h2>Pay Transparency Disclosure:</h2>
+<p>Annual Base Salary Range</p>
+<p>$204,000-$255,000 USD</p>
+""")
+    req_texts = _texts(parsed["explicit_requirements"])
+    assert req_texts == ["10+ years of experience in digital product design"]
+    assert parsed["salary_min"] == 204000
+    assert parsed["salary_max"] == 255000
+    assert parsed["currency"] == "USD"
+
+
+def test_ignored_heading_terminates_active_qualification_section():
+    parsed = parse_greenhouse_description("""
+Requirements
+- Experience designing complex technical products
+Our Benefits:
+- RSUs and ESPP
+- Employee resource groups
+""")
+    assert _texts(parsed["explicit_requirements"]) == ["Experience designing complex technical products"]
+
+
+def test_content_level_perks_without_clean_heading_are_excluded():
+    parsed = parse_greenhouse_description("""
+Requirements
+- Experience with Figma and product design
+- RSUs and employee stock purchase plan
+- Health insurance and 401(k)
+- Salary range: $100,000-$120,000 USD
+""")
+    assert _texts(parsed["explicit_requirements"]) == ["Experience with Figma and product design"]
+    assert parsed["salary_min"] == 100000
+    assert parsed["salary_max"] == 120000

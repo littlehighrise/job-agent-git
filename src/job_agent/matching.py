@@ -135,7 +135,7 @@ def professional_design_years(evidence: list[ExperienceEvidence], today: date | 
     for exp in evidence:
         if not exp.start_date:
             continue
-        end = today if exp.end_date == "present" or exp.end_date is None else exp.end_date
+        end = today if exp.end_date == "present" or exp.end_date is None else min(exp.end_date, today)
         concepts = concepts_for_text(" ".join([exp.role, *exp.skills, *exp.responsibilities, *exp.allowed_claims]))
         if concepts & qualifying or "designer" in norm(exp.role):
             intervals.append((exp.start_date, end))
