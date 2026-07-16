@@ -134,3 +134,18 @@ def test_summary_prefers_target_family_over_unrelated_rejected_and_adds_health_m
     assert summary["highest_scoring_rejected_jobs"][0]["job_title"] == "Product Manager"
     assert summary["jobs_with_zero_hard_requirements"] >= 1
     assert "Highest-scoring Rejected Jobs" in (tmp_path / "summary.md").read_text()
+
+
+def test_report_renders_zero_and_parsing_review_section(tmp_path):
+    db = tmp_path / "validation.sqlite3"
+    store = ApplicationStore(db)
+    job = load_model_list(Path("data/sample_jobs/jobs.json"), JobPosting)[0].model_copy(update={"source_job_id": "title-only", "job_title": "Senior Product Designer", "explicit_requirements": [], "responsibilities": ["Design"], "parsing_quality": ParsingQuality.LOW})
+    analysis = MatchAnalysis(job_id="title-only", role_match_score=0, evidence_confidence_score=0, application_risk_score=0, classification="REJECT", title_score=100)
+    store.upsert(job, analysis, None)
+    source_results = tmp_path / "source-results.json"
+    source_results.write_text("[]")
+    summary = summarize(db, source_results, tmp_path / "summary.json", tmp_path / "summary.md")
+    md = (tmp_path / "summary.md").read_text()
+    assert "Jobs Needing Parsing Review" in md
+    assert "| 0 | 0 | 0 | REJECT |" in md
+    assert summary["parsing_review_jobs_count"] == 1

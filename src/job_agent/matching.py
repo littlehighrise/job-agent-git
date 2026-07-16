@@ -41,15 +41,18 @@ CATEGORY_WEIGHTS: dict[str, float] = {
 HARD_REQUIREMENT_MULTIPLIER = 1.25
 
 CONCEPT_GROUPS: dict[str, tuple[str, ...]] = {
-    "DESIGN_SYSTEMS": ("design system", "design systems", "component library", "component libraries", "ui library", "design library", "reusable components", "design tokens", "design system operations"),
+    "DESIGN_SYSTEMS": ("design system", "design systems", "component library", "component libraries", "ui library", "design library", "reusable components", "design system operations"),
+    "DESIGN_SYSTEM_TOKENS": ("design tokens", "tailwind tokens", "component styling", "interface consistency"),
+    "TECHNICAL_SYSTEMS_REASONING": ("data structures", "system architecture", "distributed systems", "technical infrastructure", "engineering tradeoffs", "distributed architecture", "distributed computing"),
+    "DATA_INFORMED_DESIGN": ("product analytics", "metrics", "experimentation", "a/b testing", "quantitative data", "data-informed design decisions", "using data to inform design decisions"),
     "FIGMA": ("figma", "figma library", "figma libraries", "shared figma resources"),
     "ENGINEERING_COLLABORATION": ("developer collaboration", "engineering collaboration", "partner with engineers", "partnering with engineers", "design and engineering collaboration", "cross-functional collaboration with developers", "cross-functional collaboration"),
     "COMPONENT_STANDARDIZATION": ("component standardization", "reusable interface patterns", "standardized components", "standardized component", "component consistency", "reusable ui patterns", "standardize reusable components"),
     "PRODUCT_DESIGN": ("product design", "ux design", "ui/ux design", "interaction design"),
     "VISUAL_CRAFT": ("visual design", "visual craft", "strong eye for visual craft", "typography", "layout", "composition", "graphic design", "visual identity", "polished interface design", "polished interface designs", "presentation design", "illustration", "branding"),
-    "FORMAL_USER_RESEARCH": ("user research", "user-centered research", "conducting research", "research methods", "research studies", "usability testing", "user interviews"),
-    "REQUIREMENTS_DISCOVERY": ("requirements analysis", "clarify requirements", "requirements discovery", "client discovery", "stakeholder discovery", "understand business problems"),
-    "RESEARCH_INFORMED_DESIGN": ("synthesizing insights", "research-informed design", "audience understanding", "user flows", "information architecture"),
+    "FORMAL_USER_RESEARCH": ("user interviews", "usability testing", "research planning", "qualitative research", "quantitative research", "conducting user research", "synthesizing research findings", "formal user research"),
+    "REQUIREMENTS_DISCOVERY": ("stakeholder discovery", "client discovery", "requirements gathering", "requirements analysis", "translating stakeholder requirements", "clarify requirements", "requirements discovery", "understand business problems"),
+    "RESEARCH_INFORMED_DESIGN": ("audience understanding", "using research", "incorporating insights", "research-informed decisions", "research-informed design", "user flows", "information architecture"),
     "ACCESSIBILITY": ("accessibility", "accessible design", "wcag", "inclusive design"),
     "RESPONSIVE_DESIGN": ("responsive design", "responsive web design", "mobile and responsive interfaces"),
     "REACT_ENGINEERING": ("react development", "react developer", "react engineering", "production interfaces in react", "build production interfaces in react", "professional react engineering"),
@@ -57,7 +60,9 @@ CONCEPT_GROUPS: dict[str, tuple[str, ...]] = {
     "SECURITY_CLEARANCE": ("security clearance", "active clearance", "clearance required"),
 }
 RELATED_CONCEPTS: dict[str, set[str]] = {
-    "DESIGN_SYSTEMS": {"COMPONENT_STANDARDIZATION", "FIGMA", "ENGINEERING_COLLABORATION"},
+    "DESIGN_SYSTEMS": {"COMPONENT_STANDARDIZATION", "FIGMA", "ENGINEERING_COLLABORATION", "DESIGN_SYSTEM_TOKENS"},
+    "DESIGN_SYSTEM_TOKENS": {"DESIGN_SYSTEMS"},
+    "TECHNICAL_SYSTEMS_REASONING": {"ENGINEERING_COLLABORATION"},
     "COMPONENT_STANDARDIZATION": {"DESIGN_SYSTEMS", "ENGINEERING_COLLABORATION"},
     "ENGINEERING_COLLABORATION": {"COMPONENT_STANDARDIZATION", "DESIGN_SYSTEMS"},
     "PRODUCT_DESIGN": {"DESIGN_SYSTEMS", "ACCESSIBILITY", "RESPONSIVE_DESIGN", "VISUAL_CRAFT"},
@@ -66,7 +71,7 @@ RELATED_CONCEPTS: dict[str, set[str]] = {
     "FORMAL_USER_RESEARCH": {"REQUIREMENTS_DISCOVERY", "RESEARCH_INFORMED_DESIGN"},
     "RESEARCH_INFORMED_DESIGN": {"REQUIREMENTS_DISCOVERY"},
 }
-GENERIC_TOKENS = {"experience", "work", "working", "hands", "hand", "required", "preferred", "familiarity", "years", "year", "team", "role", "using", "with", "and", "the", "for", "on"}
+GENERIC_TOKENS = {"experience", "work", "working", "hands", "hand", "required", "preferred", "familiarity", "years", "year", "team", "role", "using", "with", "and", "the", "for", "on", "design", "product", "decisions", "systems", "user", "process"}
 
 
 @dataclass(frozen=True)
@@ -244,6 +249,13 @@ def evaluate_requirement(req: JobRequirement, records: list[EvidenceRecord], pro
             transferable.append(record)
         elif len(token_overlap) >= 2:
             partial.append(record)
+
+    required_concept_count = len(req_concepts)
+    if direct and required_concept_count > 1:
+        covered = set().union(*(req_concepts & set(r.concepts) for r in direct))
+        if len(covered) < required_concept_count:
+            partial.extend(direct)
+            direct = []
 
     if direct:
         statement_count = len({r.statement_id for r in direct if r.statement_id})
@@ -471,8 +483,13 @@ def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], p
         component_applicability["hard_requirement_coverage"] = "not_applicable"
     if preference_alignment is None:
         component_applicability["preferred_qualification_alignment"] = "not_applicable"
-    role_score, score_components, absent_dimensions = _normalized_score_components(component_values, component_applicability)
     evidence_confidence = _evidence_confidence(evaluations)
+    if insufficient_parsing or evidence_confidence == 0:
+        component_applicability["title_alignment"] = "unknown"
+        component_applicability["industry_domain_alignment"] = "unknown"
+        component_applicability["work_arrangement_alignment"] = "unknown"
+        component_applicability["ic_management_alignment"] = "unknown"
+    role_score, score_components, absent_dimensions = _normalized_score_components(component_values, component_applicability)
     risk = _application_risk(all_evaluations, absolute_blockers, review_concerns, evidence_confidence)
 
     auto_apply_blockers = [c for c in review_concerns if c.startswith("Auto-apply blocker")]
@@ -482,7 +499,7 @@ def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], p
     elif role_score >= prefs.auto_apply_threshold and evidence_confidence >= prefs.evidence_confidence_threshold and not auto_apply_blockers and not insufficient_parsing and risk < 20:
         classification = Classification.AUTO_APPLY_ELIGIBLE
         rationale = ["Meets configured role and evidence thresholds with no automatic-application blockers."]
-    elif role_score >= prefs.review_threshold:
+    elif role_score >= prefs.review_threshold and not insufficient_parsing and evidence_confidence > 0:
         classification = Classification.REVIEW_REQUIRED
         rationale = ["Meets review threshold but requires human review for concerns, gaps, or threshold confidence."]
     else:
@@ -503,7 +520,7 @@ def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], p
         ic_management_alignment=ic_management,
         weighted_requirement_points=round(weighted_points, 2),
         weighted_requirement_possible=round(weighted_possible, 2),
-        formula="Applicable dimensions use configured weights normalized over scored dimensions: title .22 + req .32 + hard_req .18 + preferences .08 + industry/domain .08 + work arrangement .07 + IC/management .05",
+        formula="Applicable dimensions use configured weights normalized over scored dimensions, but title alignment is not normalized upward when core qualification evidence is missing or parsing quality is LOW/INSUFFICIENT.",
         components=score_components,
         absent_scoring_dimensions=absent_dimensions,
     )

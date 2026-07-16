@@ -72,6 +72,7 @@ def summarize(db_path: Path, source_results_path: Path, output_json: Path, outpu
     for row in rows:
         counts[row.get("classification") or ""] = counts.get(row.get("classification") or "", 0) + 1
 
+    parsing_review_rows = _parsing_review_rows(rows)
     top_jobs = [_top_job(row) for row in _rank_user_facing_top_jobs(rows)[:top_limit]]
     highest_scoring_rejected_jobs = [_top_job(row) for row in sorted([r for r in rows if r.get("classification") == Classification.REJECT.value], key=lambda r: (r.get("match_score") or 0, r.get("evidence_confidence") or 0), reverse=True)[:top_limit]]
     parsing_counts = _parsing_counts(rows)
@@ -93,10 +94,21 @@ def summarize(db_path: Path, source_results_path: Path, output_json: Path, outpu
         "jobs_with_zero_hard_requirements": parsing_counts["jobs_with_zero_hard_requirements"],
         "jobs_with_one_or_more_hard_requirements": parsing_counts["jobs_with_one_or_more_hard_requirements"],
         "jobs_with_absent_scoring_dimensions": parsing_counts["jobs_with_absent_scoring_dimensions"],
+        "jobs_missing_explicit_requirement_coverage": parsing_counts["jobs_missing_explicit_requirement_coverage"],
+        "jobs_missing_preferred_qualifications": parsing_counts["jobs_missing_preferred_qualifications"],
+        "jobs_with_unknown_industry_domain": parsing_counts["jobs_with_unknown_industry_domain"],
+        "jobs_with_unknown_work_arrangement": parsing_counts["jobs_with_unknown_work_arrangement"],
+        "jobs_with_unknown_management_alignment": parsing_counts["jobs_with_unknown_management_alignment"],
+        "title_only_analyses": parsing_counts["title_only_analyses"],
+        "low_parsing_jobs": parsing_counts["low_parsing_jobs"],
+        "jobs_with_zero_evidence_confidence": parsing_counts["jobs_with_zero_evidence_confidence"],
+        "actionable_review_jobs": parsing_counts["actionable_review_jobs"],
+        "parsing_review_jobs_count": parsing_counts["parsing_review_jobs_count"],
         "jobs_rejected_solely_below_review_threshold": parsing_counts["jobs_rejected_solely_below_review_threshold"],
         "jobs_within_5_points_of_review_threshold": parsing_counts["jobs_within_5_points_of_review_threshold"],
         "validation_warnings": validation_warnings,
         "top_jobs": top_jobs,
+        "parsing_review_jobs": [_parsing_review_job(row) for row in parsing_review_rows[:top_limit]],
         "highest_scoring_rejected_jobs": highest_scoring_rejected_jobs,
     }
     write_json(output_json, summary)
@@ -126,7 +138,9 @@ def _is_target_role_family(row: dict[str, Any]) -> bool:
 def _rank_user_facing_top_jobs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     def key(row: dict[str, Any]) -> tuple[int, int, int]:
         classification = row.get("classification")
-        if classification == Classification.REVIEW_REQUIRED.value:
+        if not _is_actionable_match(row):
+            bucket = 0
+        elif classification == Classification.REVIEW_REQUIRED.value:
             bucket = 3
         elif classification == Classification.AUTO_APPLY_ELIGIBLE.value:
             bucket = 2
@@ -135,21 +149,47 @@ def _rank_user_facing_top_jobs(rows: list[dict[str, Any]]) -> list[dict[str, Any
         else:
             bucket = 0
         return (bucket, row.get("match_score") or 0, row.get("evidence_confidence") or 0)
-    return sorted(rows, key=key, reverse=True)
+    return sorted([row for row in rows if _is_actionable_match(row)], key=key, reverse=True)
+
+
+def _is_actionable_match(row: dict[str, Any]) -> bool:
+    job = json.loads(row.get("job_json") or "{}")
+    analysis = json.loads(row.get("analysis_json") or "{}")
+    quality = str(job.get("parsing_quality") or "").upper()
+    conf = row.get("evidence_confidence") or analysis.get("evidence_confidence_score") or 0
+    has_evals = bool(analysis.get("requirement_evaluations")) or conf > 0
+    return bool(job.get("explicit_requirements")) and quality in {"HIGH", "MEDIUM"} and has_evals and conf > 0
+
+def _parsing_review_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted([r for r in rows if _is_target_role_family(r) and not _is_actionable_match(r)], key=lambda r: (r.get("match_score") or 0, r.get("evidence_confidence") or 0), reverse=True)
+
+def _parsing_review_job(row: dict[str, Any]) -> dict[str, Any]:
+    job = json.loads(row.get("job_json") or "{}")
+    analysis = json.loads(row.get("analysis_json") or "{}")
+    reasons = []
+    if not job.get("explicit_requirements"): reasons.append("no explicit requirements parsed")
+    if str(job.get("parsing_quality") or "").upper() not in {"HIGH", "MEDIUM"}: reasons.append(f"parsing quality {job.get('parsing_quality') or 'unknown'}")
+    if not analysis.get("requirement_evaluations"): reasons.append("no requirement evaluations")
+    if (row.get("evidence_confidence") or analysis.get("evidence_confidence_score") or 0) == 0: reasons.append("zero evidence confidence")
+    return {"employer": row.get("employer"), "job_title": row.get("job_title"), "parsing_quality": job.get("parsing_quality"), "title_alignment": analysis.get("title_score"), "reason": "; ".join(reasons), "application_url": row.get("application_url")}
 
 def _parsing_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
     quality_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0, "INSUFFICIENT": 0}
     explicit = responsibilities = evaluations = nonzero_confidence = 0
     zero_hard = one_or_more_hard = absent_dimensions = rejected_score_only = near_review = 0
+    missing_explicit = missing_preferred = unknown_industry = unknown_work = unknown_mgmt = title_only = low_parsing = zero_confidence = actionable = parsing_review = 0
     for row in rows:
         job = json.loads(row.get("job_json") or "{}")
         analysis = json.loads(row.get("analysis_json") or "{}")
         quality = str(job.get("parsing_quality") or "").upper()
         if quality in quality_counts:
             quality_counts[quality] += 1
+        if quality == "LOW": low_parsing += 1
         explicit_reqs = job.get("explicit_requirements") or []
         if explicit_reqs:
             explicit += 1
+        else:
+            missing_explicit += 1
         if any(req.get("is_hard_requirement") for req in explicit_reqs if isinstance(req, dict)):
             one_or_more_hard += 1
         else:
@@ -158,11 +198,21 @@ def _parsing_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
             responsibilities += 1
         if analysis.get("requirement_evaluations"):
             evaluations += 1
-        if (row.get("evidence_confidence") or 0) > 0 or (analysis.get("evidence_confidence_score") or 0) > 0:
+        conf = row.get("evidence_confidence") if row.get("evidence_confidence") is not None else analysis.get("evidence_confidence_score", 0)
+        if conf > 0:
             nonzero_confidence += 1
+        else:
+            zero_confidence += 1
         breakdown = analysis.get("score_breakdown") or {}
         if breakdown.get("absent_scoring_dimensions"):
             absent_dimensions += 1
+        absent = set(breakdown.get("absent_scoring_dimensions") or [])
+        missing_preferred += int("preferred_qualification_alignment" in absent)
+        unknown_industry += int("industry_domain_alignment" in absent)
+        unknown_work += int("work_arrangement_alignment" in absent)
+        unknown_mgmt += int("ic_management_alignment" in absent)
+        title_only += int(analysis.get("title_score", 0) > 0 and not explicit_reqs and not analysis.get("requirement_evaluations"))
+        actionable += int(_is_actionable_match(row))
         rationale = " ".join(analysis.get("final_classification_rationale") or analysis.get("rationale") or [])
         if row.get("classification") == Classification.REJECT.value and "below configured review threshold" in rationale and not analysis.get("auto_apply_blockers") and not analysis.get("hard_constraint_violations"):
             rejected_score_only += 1
@@ -170,6 +220,7 @@ def _parsing_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
         score = row.get("match_score") or analysis.get("role_match_score") or 0
         if review_threshold - 5 <= score < review_threshold:
             near_review += 1
+    parsing_review = len(_parsing_review_rows(rows))
     return {
         "parsing_quality_counts": quality_counts,
         "jobs_with_explicit_requirements": explicit,
@@ -181,6 +232,16 @@ def _parsing_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "jobs_with_absent_scoring_dimensions": absent_dimensions,
         "jobs_rejected_solely_below_review_threshold": rejected_score_only,
         "jobs_within_5_points_of_review_threshold": near_review,
+        "jobs_missing_explicit_requirement_coverage": missing_explicit,
+        "jobs_missing_preferred_qualifications": missing_preferred,
+        "jobs_with_unknown_industry_domain": unknown_industry,
+        "jobs_with_unknown_work_arrangement": unknown_work,
+        "jobs_with_unknown_management_alignment": unknown_mgmt,
+        "title_only_analyses": title_only,
+        "low_parsing_jobs": low_parsing,
+        "jobs_with_zero_evidence_confidence": zero_confidence,
+        "actionable_review_jobs": actionable,
+        "parsing_review_jobs_count": parsing_review,
     }
 
 
@@ -230,7 +291,7 @@ def to_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"- ⚠️ `{item['board_token']}` failed: {_sanitize(msg)}")
     lines.extend(["", "## Discovery Counts", "", f"- Jobs discovered: {summary['discovered']}", f"- New jobs: {summary['new']}", f"- Rejected jobs: {summary['rejected']}", f"- REVIEW_REQUIRED jobs: {summary['review_required']}", f"- AUTO_APPLY_ELIGIBLE jobs: {summary['auto_apply_eligible']}"])
     quality = summary.get("parsing_quality_counts", {})
-    lines.extend(["", "## Parsing and Evidence Health", "", f"- HIGH parsing quality: {quality.get('HIGH', 0)}", f"- MEDIUM parsing quality: {quality.get('MEDIUM', 0)}", f"- LOW parsing quality: {quality.get('LOW', 0)}", f"- INSUFFICIENT parsing quality: {quality.get('INSUFFICIENT', 0)}", f"- Jobs with explicit requirements: {summary.get('jobs_with_explicit_requirements', 0)}", f"- Jobs with responsibilities: {summary.get('jobs_with_responsibilities', 0)}", f"- Jobs with requirement evaluations: {summary.get('jobs_with_requirement_evaluations', 0)}", f"- Jobs with non-zero evidence confidence: {summary.get('jobs_with_nonzero_evidence_confidence', 0)}", f"- Jobs with zero hard requirements: {summary.get('jobs_with_zero_hard_requirements', 0)}", f"- Jobs with one or more hard requirements: {summary.get('jobs_with_one_or_more_hard_requirements', 0)}", f"- Jobs with absent scoring dimensions: {summary.get('jobs_with_absent_scoring_dimensions', 0)}", f"- Jobs rejected solely below review threshold: {summary.get('jobs_rejected_solely_below_review_threshold', 0)}", f"- Jobs within 5 points of review threshold: {summary.get('jobs_within_5_points_of_review_threshold', 0)}"])
+    lines.extend(["", "## Parsing and Evidence Health", "", f"- HIGH parsing quality: {quality.get('HIGH', 0)}", f"- MEDIUM parsing quality: {quality.get('MEDIUM', 0)}", f"- LOW parsing quality: {quality.get('LOW', 0)}", f"- INSUFFICIENT parsing quality: {quality.get('INSUFFICIENT', 0)}", f"- Jobs with explicit requirements: {summary.get('jobs_with_explicit_requirements', 0)}", f"- Jobs with responsibilities: {summary.get('jobs_with_responsibilities', 0)}", f"- Jobs with requirement evaluations: {summary.get('jobs_with_requirement_evaluations', 0)}", f"- Jobs with non-zero evidence confidence: {summary.get('jobs_with_nonzero_evidence_confidence', 0)}", f"- Jobs with zero hard requirements: {summary.get('jobs_with_zero_hard_requirements', 0)}", f"- Jobs with one or more hard requirements: {summary.get('jobs_with_one_or_more_hard_requirements', 0)}", f"- Jobs with absent scoring dimensions: {summary.get('jobs_with_absent_scoring_dimensions', 0)}", f"- Jobs missing explicit requirement coverage: {summary.get('jobs_missing_explicit_requirement_coverage', 0)}", f"- Jobs missing preferred qualifications: {summary.get('jobs_missing_preferred_qualifications', 0)}", f"- Jobs with unknown industry/domain: {summary.get('jobs_with_unknown_industry_domain', 0)}", f"- Jobs with unknown work arrangement: {summary.get('jobs_with_unknown_work_arrangement', 0)}", f"- Jobs with unknown management alignment: {summary.get('jobs_with_unknown_management_alignment', 0)}", f"- Title-only analyses: {summary.get('title_only_analyses', 0)}", f"- LOW parsing jobs: {summary.get('low_parsing_jobs', 0)}", f"- Jobs with zero evidence confidence: {summary.get('jobs_with_zero_evidence_confidence', 0)}", f"- Actionable review jobs: {summary.get('actionable_review_jobs', 0)}", f"- Parsing-review jobs: {summary.get('parsing_review_jobs_count', 0)}", f"- Jobs rejected solely below review threshold: {summary.get('jobs_rejected_solely_below_review_threshold', 0)}", f"- Jobs within 5 points of review threshold: {summary.get('jobs_within_5_points_of_review_threshold', 0)}"])
     for warning in summary.get("validation_warnings", []):
         lines.append(f"- ⚠️ {warning}")
     lines.extend(["", "## Top Matching Jobs", ""])
@@ -240,13 +301,21 @@ def to_markdown(summary: dict[str, Any]) -> str:
         lines.append("| Employer | Title | Location | Remote | Role | Evidence | Risk | Classification | URL |")
         lines.append("| --- | --- | --- | --- | ---: | ---: | ---: | --- | --- |")
         for job in summary["top_jobs"]:
-            lines.append("| " + " | ".join(str(job.get(k) or "") for k in ["employer", "job_title", "location", "remote_status", "role_match_score", "evidence_confidence_score", "application_risk_score", "classification", "application_url"]) + " |")
+            lines.append("| " + " | ".join("" if job.get(k) is None else str(job.get(k)) for k in ["employer", "job_title", "location", "remote_status", "role_match_score", "evidence_confidence_score", "application_risk_score", "classification", "application_url"]) + " |")
+    lines.extend(["", "## Jobs Needing Parsing Review", ""])
+    if summary.get("parsing_review_jobs"):
+        lines.append("| Employer | Title | Parsing | Title Alignment | Reason | URL |")
+        lines.append("| --- | --- | --- | ---: | --- | --- |")
+        for job in summary["parsing_review_jobs"]:
+            lines.append("| " + " | ".join("" if job.get(k) is None else str(job.get(k)) for k in ["employer", "job_title", "parsing_quality", "title_alignment", "reason", "application_url"]) + " |")
+    else:
+        lines.append("No target-family jobs need parsing diagnostics.")
     lines.extend(["", "## Highest-scoring Rejected Jobs", ""])
     if summary.get("highest_scoring_rejected_jobs"):
         lines.append("| Employer | Title | Location | Remote | Role | Evidence | Risk | Classification | URL |")
         lines.append("| --- | --- | --- | --- | ---: | ---: | ---: | --- | --- |")
         for job in summary["highest_scoring_rejected_jobs"]:
-            lines.append("| " + " | ".join(str(job.get(k) or "") for k in ["employer", "job_title", "location", "remote_status", "role_match_score", "evidence_confidence_score", "application_risk_score", "classification", "application_url"]) + " |")
+            lines.append("| " + " | ".join("" if job.get(k) is None else str(job.get(k)) for k in ["employer", "job_title", "location", "remote_status", "role_match_score", "evidence_confidence_score", "application_risk_score", "classification", "application_url"]) + " |")
     else:
         lines.append("No rejected jobs were persisted.")
     lines.extend(["", "## Failures / Warnings", "", "Individual board failures are warnings unless the CLI, database, configuration, or test suite fails.", "", "## Artifact Contents", "", "- live-validation-summary.json", "- source-results.json", "- validation.sqlite3", "- applications/ review artifacts", "- discovery.log"])
