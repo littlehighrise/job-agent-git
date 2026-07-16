@@ -12,6 +12,7 @@ from job_agent.models import (
     JobPosting,
     JobRequirement,
     MatchAnalysis,
+    ParsingQuality,
     PreferenceMode,
     RemoteStatus,
     RequirementEvaluation,
@@ -329,7 +330,7 @@ def _coverage(evaluations: list[RequirementEvaluation], only_hard: bool | None =
     items = [e for e in evaluations if only_hard is None or e.is_hard_requirement is only_hard]
     possible = sum(e.weight for e in items)
     if possible == 0:
-        return 100
+        return 0
     points = sum(e.weight * _status_points(e.status) for e in items)
     return round(points / possible * 100)
 
@@ -394,6 +395,9 @@ def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], p
     all_evaluations = evaluations + preference_evals
 
     absolute_blockers, review_concerns, industry_domain, work_arrangement, ic_management = _search_preference_signals(job, prefs)
+    insufficient_parsing = not evaluations or job.parsing_quality in {ParsingQuality.INSUFFICIENT, ParsingQuality.LOW}
+    if insufficient_parsing:
+        review_concerns.append("Insufficient parsed qualification data for confident automated evaluation.")
     if already_applied:
         absolute_blockers.append("Candidate has already applied to this position")
     for e in all_evaluations:
@@ -425,7 +429,7 @@ def match_job(candidate: CandidateProfile, evidence: list[ExperienceEvidence], p
     if absolute_blockers:
         classification = Classification.REJECT
         rationale = ["Rejected because one or more absolute blockers are present."]
-    elif role_score >= prefs.auto_apply_threshold and evidence_confidence >= prefs.evidence_confidence_threshold and not auto_apply_blockers and risk < 20:
+    elif role_score >= prefs.auto_apply_threshold and evidence_confidence >= prefs.evidence_confidence_threshold and not auto_apply_blockers and not insufficient_parsing and risk < 20:
         classification = Classification.AUTO_APPLY_ELIGIBLE
         rationale = ["Meets configured role and evidence thresholds with no automatic-application blockers."]
     elif role_score >= prefs.review_threshold:
