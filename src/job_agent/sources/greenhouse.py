@@ -80,9 +80,25 @@ def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip(" \t")
 
 
+def decode_greenhouse_html(value: str | None, max_passes: int = 2) -> str:
+    """Boundedly decode Greenhouse content before structural HTML parsing."""
+    if not value:
+        return ""
+    decoded = str(value)
+    for index in range(max_passes):
+        candidate = html.unescape(decoded)
+        if candidate == decoded:
+            break
+        decoded = candidate
+        if index == 0 and not re.search(r"&(?:lt|gt|amp|nbsp|mdash|ndash|#\d+|#x[0-9a-fA-F]+);", decoded):
+            break
+    return decoded
+
+
 def html_to_text(value: str | None) -> str:
     if not value:
         return ""
+    value = decode_greenhouse_html(value)
     if "<" not in value or ">" not in value:
         return "\n".join(_normalize_text(line) for line in value.splitlines())
     parser = _StructuredHTMLExtractor()
@@ -108,8 +124,8 @@ SECTION_ALIASES = {
     "responsibilities": "responsibilities", "your responsibilities": "responsibilities", "the opportunity": "responsibilities",
     "what you'll do": "responsibilities", "what you will do": "responsibilities", "what you'll be doing": "responsibilities",
     "requirements": "requirements", "qualifications": "requirements", "minimum qualifications": "requirements", "who you are": "requirements",
-    "what you bring": "requirements", "what you'll bring": "requirements", "you have": "requirements", "what we're looking for": "requirements", "about you": "requirements",
-    "preferred qualifications": "preferred", "preferred experience": "preferred", "nice to have": "preferred", "nice-to-have": "preferred", "bonus": "preferred", "bonus points": "preferred", "it would be great if": "preferred",
+    "what you bring": "requirements", "what you'll bring": "requirements", "you have": "requirements", "what we're looking for": "requirements", "about you": "requirements", "we'd love to hear from you if you have": "requirements",
+    "preferred qualifications": "preferred", "preferred experience": "preferred", "nice to have": "preferred", "nice-to-have": "preferred", "bonus": "preferred", "bonus points": "preferred", "it would be great if": "preferred", "while it's not required, it's an added plus if you also have": "preferred",
     "benefits": "ignore", "perks and benefits": "ignore", "compensation": "ignore", "equal opportunity": "ignore", "privacy": "ignore", "about us": "ignore", "about datadog": "ignore",
 }
 BOILERPLATE_RE = re.compile(r"\b(equal opportunity|privacy notice|we encourage you to apply|reasonable accommodation|benefits|medical dental|401\(k\)|compensation range)\b", re.I)
@@ -120,7 +136,9 @@ SALARY_RE = re.compile(r"\$\s*([\d,]+)\s*(?:-|to)\s*\$?\s*([\d,]+)\s*(USD|CAD|EU
 COUNTRIES = {"israel": "Israel", "united states": "United States", "usa": "United States", "us": "United States", "canada": "Canada", "united kingdom": "United Kingdom", "uk": "United Kingdom", "germany": "Germany", "france": "France", "india": "India"}
 
 def _heading_key(line: str) -> str:
-    return _clean(line).lower().rstrip(":")
+    key = _clean(line).lower().rstrip(":")
+    key = re.sub(r"\s+at\s+[a-z0-9 .&'-]+$", "", key)
+    return key
 
 def _extract_years(text: str) -> int | None:
     for pat in YEAR_PATTERNS:

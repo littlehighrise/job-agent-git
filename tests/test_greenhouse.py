@@ -162,3 +162,87 @@ def test_greenhouse_adapter_preserves_raw_description_and_extracts_country(monke
     assert job.required_years_experience == 10
     assert job.salary_min == 204000
     assert job.explicit_requirements
+
+DATADOG_ENCODED_HTML = """
+&lt;p&gt;&lt;strong&gt;What You’ll Do:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Partner closely with PMs and engineers to design intuitive experiences for highly technical systems.&lt;/li&gt;
+&lt;li&gt;Conduct and synthesize qualitative and quantitative research.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Who You Are:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;You have 10+ years of experience in digital product design.&lt;/li&gt;
+&lt;li&gt;You have experience designing complex technical products and systems-oriented workflows.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Benefits:&lt;/strong&gt;&lt;/p&gt;
+&lt;ul&gt;&lt;li&gt;Medical benefits and 401(k).&lt;/li&gt;&lt;/ul&gt;
+"""
+
+FIGMA_ENCODED_HTML = """
+&lt;h4&gt;&lt;strong&gt;What you&#39;ll do at Figma:&lt;/strong&gt;&lt;/h4&gt;
+&lt;ul&gt;
+&lt;li&gt;Work cross-functionally with product management, engineering, design, and research peers&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4&gt;&lt;strong&gt;We’d love to hear from you if you have:&lt;/strong&gt;&lt;/h4&gt;
+&lt;ul&gt;
+&lt;li&gt;3+ years of experience designing UX and UI for a software product&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4&gt;&lt;strong&gt;While it’s not required, it’s an added plus if you also have:&lt;/strong&gt;&lt;/h4&gt;
+&lt;ul&gt;
+&lt;li&gt;Prior work creating, maintaining, or contributing to a design system&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Equal opportunity employer. Privacy notice. Reasonable accommodations are available.&lt;/p&gt;
+"""
+
+
+def _texts(items):
+    return [item.text for item in items]
+
+
+def test_entity_encoded_datadog_fixture_matches_raw_html_and_excludes_benefits():
+    raw = DATADOG_ENCODED_HTML.replace("&lt;", "<").replace("&gt;", ">")
+    encoded = parse_greenhouse_description(DATADOG_ENCODED_HTML)
+    raw_parsed = parse_greenhouse_description(raw)
+    assert encoded["responsibilities"] == raw_parsed["responsibilities"]
+    assert _texts(encoded["explicit_requirements"]) == _texts(raw_parsed["explicit_requirements"])
+    assert encoded["responsibilities"] == [
+        "Partner closely with PMs and engineers to design intuitive experiences for highly technical systems.",
+        "Conduct and synthesize qualitative and quantitative research.",
+    ]
+    assert _texts(encoded["explicit_requirements"]) == [
+        "You have 10+ years of experience in digital product design.",
+        "You have experience designing complex technical products and systems-oriented workflows.",
+    ]
+    assert encoded["required_years_experience"] == 10
+    assert encoded["parsing_quality"] in {"MEDIUM", "HIGH"}
+    assert all("benefit" not in text.lower() and "401" not in text for text in _texts(encoded["explicit_requirements"]))
+
+
+def test_entity_encoded_figma_fixture_classifies_required_and_preferred_sections():
+    parsed = parse_greenhouse_description(FIGMA_ENCODED_HTML)
+    assert parsed["responsibilities"] == ["Work cross-functionally with product management, engineering, design, and research peers"]
+    assert _texts(parsed["explicit_requirements"]) == ["3+ years of experience designing UX and UI for a software product"]
+    assert _texts(parsed["inferred_preferences"]) == ["Prior work creating, maintaining, or contributing to a design system"]
+    assert parsed["required_years_experience"] == 3
+    assert parsed["parsing_quality"] == "HIGH"
+    assert all("privacy" not in text.lower() and "accommodation" not in text.lower() for text in _texts(parsed["explicit_requirements"]))
+
+
+def test_plain_text_and_nested_entities_are_normalized_without_damage():
+    parsed = parse_greenhouse_description("Responsibilities\n- Design systems &amp;nbsp; for teams &amp;mdash; globally\nRequirements\n- You have 3+ years &quot;UX&quot; experience")
+    assert parsed["responsibilities"] == ["Design systems for teams - globally"]
+    assert _texts(parsed["explicit_requirements"]) == ['You have 3+ years "UX" experience']
+    assert parsed["required_years_experience"] == 3
+
+
+def test_salary_extraction_after_entity_decoding():
+    parsed = parse_greenhouse_description("""
+&lt;div class=&quot;pay-range&quot;&gt;
+&lt;span&gt;$165,000&lt;/span&gt;
+&lt;span class=&quot;divider&quot;&gt;&amp;mdash;&lt;/span&gt;
+&lt;span&gt;$190,000 USD&lt;/span&gt;
+&lt;/div&gt;
+""")
+    assert parsed["salary_min"] == 165000
+    assert parsed["salary_max"] == 190000
+    assert parsed["currency"] == "USD"
