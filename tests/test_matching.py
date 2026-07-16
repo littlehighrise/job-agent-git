@@ -410,3 +410,37 @@ def test_representative_live_score_patterns_no_hard_requirements():
         assert new > old
         assert comps["hard_requirement_coverage"].effective_weight == 0
         assert "hard_requirement_coverage" in absent
+
+
+def test_title_only_score_cannot_enter_review_queue():
+    profile, evidence, prefs, jobs = fixtures()
+    job = jobs[0].model_copy(update={"job_title": "Senior Product Designer", "explicit_requirements": [], "inferred_preferences": [], "required_technologies": [], "required_years_experience": None, "parsing_quality": "LOW"})
+    analysis = match_job(profile, evidence, prefs, job)
+    assert analysis.title_score >= 90
+    assert analysis.role_match_score < prefs.review_threshold
+    assert analysis.classification == Classification.REJECT
+    assert analysis.score_breakdown.components["title_alignment"].applicability == "unknown"
+
+
+def test_no_hard_requirements_valid_when_explicit_requirements_exist():
+    profile, evidence, prefs, jobs = fixtures()
+    job = jobs[0].model_copy(update={"explicit_requirements": [JobRequirement(text="Hands-on Figma design systems experience", requirement_type="explicit", category="skill", is_hard_requirement=False)], "required_technologies": [], "required_years_experience": None})
+    analysis = match_job(profile, evidence, prefs, job)
+    assert analysis.requirement_evaluations
+    assert analysis.score_breakdown.components["hard_requirement_coverage"].applicability == "not_applicable"
+    assert analysis.evidence_confidence_score > 0
+
+
+def test_semantic_distinctions_reduce_false_positives():
+    formal = eval_req("Conducting research, synthesizing insights, and influencing product strategy across cross-functional teams", category="skill", hard=False)
+    assert formal.status != RequirementMatchStatus.SUPPORTED
+    metrics = eval_req("Familiarity with experimentation, metrics, or using data to inform design decisions", category="skill", hard=False)
+    assert "caci_tailwind_tokens" not in metrics.matched_evidence_statement_ids
+    assert metrics.status in {RequirementMatchStatus.UNSUPPORTED, RequirementMatchStatus.TRANSFERABLE, RequirementMatchStatus.PARTIALLY_SUPPORTED}
+    technical = eval_req("Fluency in data structures, system architecture, and distributed systems", category="skill", hard=False)
+    assert "caci_figma_admin" not in technical.matched_evidence_statement_ids
+    assert technical.status != RequirementMatchStatus.SUPPORTED
+    generic = eval_req("Design decisions", category="skill", hard=False)
+    assert generic.status == RequirementMatchStatus.UNSUPPORTED
+    distinctive = eval_req("Component standardization with engineers", category="skill", hard=False)
+    assert distinctive.status in {RequirementMatchStatus.SUPPORTED, RequirementMatchStatus.PARTIALLY_SUPPORTED}

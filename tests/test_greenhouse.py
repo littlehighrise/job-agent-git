@@ -306,3 +306,37 @@ def test_greenhouse_excludes_benefits_bullets_but_preserves_business_benefits_re
     parsed = parse_greenhouse_description(html)
     texts = [r.text for r in parsed["explicit_requirements"]]
     assert texts == ["Ability to articulate the business benefits and technical advantages of design decisions"]
+
+
+def test_discord_sections_and_boilerplate_termination():
+    parsed = parse_greenhouse_description("""
+<h2>What You'll Be Doing</h2><ul><li>Design engagement experiences</li></ul>
+<h2>What you should have</h2><ul>
+<li>5+ years designing and shipping digital products</li>
+<li>Strong product thinking</li>
+<li>Advanced Figma experience</li>
+<li>Experience contributing to a design system</li>
+<li>Cross-functional collaboration</li>
+</ul>
+<h2>Bonus Points</h2><ul><li>Gaming experience</li></ul>
+<h2>Why Discord?</h2><p>Company mission text.</p>
+<h2>Applicant and Candidate Privacy Policy</h2><ul><li>Privacy text should not be a preference</li></ul>
+<h2>Reasonable Accommodations</h2><ul><li>Accommodation text should not be a preference</li></ul>
+""")
+    assert parsed["responsibilities"] == ["Design engagement experiences"]
+    assert "5+ years designing and shipping digital products" in _texts(parsed["explicit_requirements"])
+    assert "Gaming experience" in _texts(parsed["inferred_preferences"])
+    assert all("privacy" not in t.lower() and "accommodation" not in t.lower() and "mission" not in t.lower() for t in _texts(parsed["inferred_preferences"]))
+    assert parsed["parsing_quality"] in {"HIGH", "MEDIUM"}
+
+
+def test_work_arrangement_and_country_inference_regressions():
+    from job_agent.sources.greenhouse import infer_country, infer_remote_status
+    assert infer_remote_status("Staff Product Designer", "New York, NY", "Designing observability for distributed systems. We operate as a hybrid workplace.") == RemoteStatus.HYBRID
+    assert infer_remote_status("Product Designer", "San Francisco, CA", "This role can be held from one of our US hubs or remotely in the United States.") == RemoteStatus.REMOTE
+    assert infer_remote_status("Designer", None, "Distributed team across several time zones") == RemoteStatus.REMOTE
+    assert infer_remote_status("Designer", None, "Designing observability for distributed systems") == RemoteStatus.UNKNOWN
+    assert infer_country("San Francisco, CA • New York, NY • United States") == "United States"
+    assert infer_country("Tel Aviv, Israel") == "Israel"
+    assert infer_country("Paris, France") == "France"
+    assert infer_country("San Francisco Bay Area") == "United States"

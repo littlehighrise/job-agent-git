@@ -124,9 +124,9 @@ SECTION_ALIASES = {
     "responsibilities": "responsibilities", "your responsibilities": "responsibilities", "the opportunity": "responsibilities",
     "what you'll do": "responsibilities", "what you will do": "responsibilities", "what you'll be doing": "responsibilities",
     "requirements": "requirements", "qualifications": "requirements", "minimum qualifications": "requirements", "who you are": "requirements",
-    "what you bring": "requirements", "what you'll bring": "requirements", "you have": "requirements", "what we're looking for": "requirements", "about you": "requirements", "we'd love to hear from you if you have": "requirements",
+    "what you bring": "requirements", "what you'll bring": "requirements", "what you should have": "requirements", "what you'll need": "requirements", "what you'll need": "requirements", "what we're looking for in you": "requirements", "what we're looking for in you": "requirements", "you have": "requirements", "what we're looking for": "requirements", "about you": "requirements", "we'd love to hear from you if you have": "requirements",
     "preferred qualifications": "preferred", "preferred experience": "preferred", "nice to have": "preferred", "nice-to-have": "preferred", "bonus": "preferred", "bonus points": "preferred", "it would be great if": "preferred", "while it's not required, it's an added plus if you also have": "preferred",
-    "benefits": "ignore", "perks and benefits": "ignore", "compensation": "ignore", "equal opportunity": "ignore", "privacy": "ignore", "about us": "ignore", "about datadog": "ignore",
+    "benefits": "ignore", "perks and benefits": "ignore", "compensation": "ignore", "equal opportunity": "ignore", "privacy": "ignore", "privacy policy": "ignore", "applicant and candidate privacy policy": "ignore", "reasonable accommodations": "ignore", "accommodations": "ignore", "inclusion": "ignore", "join us in our mission": "ignore", "about discord": "ignore", "why discord": "ignore", "about us": "ignore", "about datadog": "ignore",
 }
 IGNORED_HEADING_PATTERNS = [
     re.compile(pattern, re.I) for pattern in [
@@ -141,7 +141,13 @@ IGNORED_HEADING_PATTERNS = [
         r"^equal\s+opportunity(?:\s+employer)?$",
         r"^diversity\s+(?:and|&)\s+inclusion$",
         r"^accommodations?$",
-        r"^privacy\s+notice$",
+        r"^privacy(?:\s+policy|\s+notice)?$",
+        r"^applicant\s+and\s+candidate\s+privacy\s+policy$",
+        r"^reasonable\s+accommodations?$",
+        r"^inclusion$",
+        r"^join\s+us\s+in\s+our\s+mission$",
+        r"^about\s+discord$",
+        r"^why\s+discord$",
     ]
 ]
 NON_QUALIFICATION_RE = re.compile(
@@ -198,11 +204,17 @@ def _salary(text: str) -> tuple[int|None,int|None,str|None]:
     if not m: return None, None, None
     return int(m.group(1).replace(',', '')), int(m.group(2).replace(',', '')), (m.group(3) or 'USD').upper()
 
+US_STATE_RE = re.compile(r"\b(AL|AK|AZ|AR|CA|CO|CT|DC|DE|FL|GA|HI|IA|ID|IL|IN|KS|KY|LA|MA|MD|ME|MI|MN|MO|MS|MT|NC|ND|NE|NH|NJ|NM|NV|NY|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VA|VT|WA|WI|WV)\b")
+
 def infer_country(location: str | None) -> str | None:
     if not location: return None
-    parts = [p.strip().lower() for p in re.split(r"[,/|-]", location) if p.strip()]
-    for p in reversed(parts):
-        if p in COUNTRIES: return COUNTRIES[p]
+    lowered = _normalize_text(location).lower()
+    for key, country in COUNTRIES.items():
+        if re.search(rf"(?<![a-z]){re.escape(key)}(?![a-z])", lowered): return country
+    parts = [p.strip() for p in re.split(r"\s*(?:[•;|/]|\s+-\s+|,)\s*", location) if p.strip()]
+    if any(US_STATE_RE.fullmatch(p) for p in parts): return "United States"
+    if re.search(r"\b(San Francisco|New York),\s*(CA|NY)\b", location): return "United States"
+    if re.search(r"\bSan Francisco Bay Area\b", location, re.I): return "United States"
     return None
 
 
@@ -256,10 +268,13 @@ def parse_greenhouse_description(description: str) -> dict[str, Any]:
 
 
 def infer_remote_status(title: str, location: str | None, description: str) -> RemoteStatus:
-    text = " ".join(v for v in [title, location, description[:1000]] if v).lower()
-    if re.search(r"\bhybrid\b", text): return RemoteStatus.HYBRID
-    if re.search(r"\b(remote|work from home|distributed)\b", text): return RemoteStatus.REMOTE
-    if re.search(r"\b(on-site|onsite|in office|in-office)\b", text): return RemoteStatus.ONSITE
+    text = " ".join(v for v in [title, location, description[:2000]] if v).lower()
+    remote = re.search(r"\b(remote role|remote position|work remotely|remotely in the united states|remote eligible|distributed team|distributed workforce|work from home)\b", text) or re.search(r"(?:^|[-,()\s])remote(?:[-,()\s]|$)", text)
+    hybrid = re.search(r"\b(hybrid workplace|hybrid role|hybrid position|operate as a hybrid|hybrid)\b", text)
+    onsite = re.search(r"\b(on-site|onsite|in office|in-office|required to work from .* office)\b", text)
+    if remote: return RemoteStatus.REMOTE
+    if hybrid: return RemoteStatus.HYBRID
+    if onsite: return RemoteStatus.ONSITE
     return RemoteStatus.UNKNOWN
 
 
