@@ -120,7 +120,7 @@ class ExperienceEvidence(BaseModel):
 class CandidateProfile(BaseModel):
     candidate_id: str
     full_name: str
-    email: str
+    email: str | None = None
     phone: str | None = None
     location: str | None = None
     portfolio_url: str | None = None
@@ -268,9 +268,13 @@ class MatchAnalysis(BaseModel):
 class ResumePlanItem(BaseModel):
     job_requirement: str
     selected_candidate_evidence: list[str]
+    selected_statement_ids: list[str] = Field(default_factory=list)
+    selected_experience_id: str | None = None
     why_relevant: str
+    verified_statement_text: str | None = None
     intended_resume_section: str
     proposed_framing: str
+    wording_type: Literal["verbatim_verified_evidence", "conservative_deterministic_condensation", "excluded"] = "conservative_deterministic_condensation"
     confidence: int
 
 
@@ -279,14 +283,29 @@ class ResumeContentPlan(BaseModel):
     items: list[ResumePlanItem]
 
 
+class ResumeBullet(BaseModel):
+    text: str
+    experience_id: str
+    statement_ids: list[str] = Field(default_factory=list)
+    source_type: str = "verified_statement"
+    confidence: int = 100
+    targeted_requirement_ids: list[str] = Field(default_factory=list)
+    targeted_requirements: list[str] = Field(default_factory=list)
+
+
 class ResumeExperience(BaseModel):
     employer: str
     title: str
+    start_date: date | None = None
+    end_date: date | Literal["present"] | None = None
+    location: str | None = None
     bullets: list[str]
+    bullet_provenance: list[ResumeBullet] = Field(default_factory=list)
 
 
 class StructuredResume(BaseModel):
     candidate_name: str
+    status: Literal["DRAFT_INCOMPLETE", "READY_FOR_REVIEW"] = "DRAFT_INCOMPLETE"
     headline: str
     contact: dict[str, str | None]
     summary: str

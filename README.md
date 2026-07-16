@@ -2,7 +2,7 @@
 
 Local-first proof of concept for an AI-assisted personal job-search and application preparation agent.
 
-The MVP is intentionally **not** a mass auto-apply bot. It discovers jobs from configured sources, normalizes postings, compares them against verified candidate evidence, scores fit/risk, creates review packages, and stops at human review.
+The MVP is intentionally **not** a mass auto-apply bot. It discovers jobs from configured sources, normalizes postings, compares them against verified candidate evidence, scores fit/risk, creates discovery review packages, and stops before resume preparation until a human explicitly approves one job.
 
 ## Current vertical slice
 
@@ -14,8 +14,8 @@ Boundaries are separated into:
 - `sources/`: source adapter architecture with `LocalJsonSourceAdapter` and `GreenhouseSourceAdapter`.
 - `sources/greenhouse.py`: public Greenhouse board fetching, conservative description parsing, and remote-status inference.
 - `matching.py`: deterministic constraint checks, title matching, requirement/evidence scoring, and classification.
-- `resume/engine.py`: structured resume planning and HTML rendering.
-- `audit.py`: factual consistency checks for prohibited claims and unsupported technologies.
+- `resume/engine.py`: statement-level resume planning, provenance capture, targeted competency filtering, and HTML rendering.
+- `audit.py`: factual consistency, contact-readiness, provenance, unsupported-claim, duplicate-bullet, and placeholder checks.
 - `persistence.py`: SQLite application history, safe schema initialization, decisions, artifact paths, and deduplication.
 - `application_adapters/`: conservative seam for later ATS/browser support; automatic submission is disabled.
 
@@ -28,7 +28,7 @@ pip install -e '.[dev]'
 job-agent discover
 ```
 
-The command writes packages under `applications/` and records application history in `job_agent.sqlite3`.
+The command writes discovery artifacts under `applications/` and records application history in `job_agent.sqlite3`. It does not create completed resumes.
 
 ## Source configuration
 
@@ -74,8 +74,10 @@ Discovery:
 5. Checks whether each job was already seen.
 6. Runs deterministic matching.
 7. Persists job and analysis JSON in SQLite.
-8. Generates local artifacts for `REVIEW_REQUIRED` and `AUTO_APPLY_ELIGIBLE` jobs.
+8. Generates discovery-only artifacts (`job.json` and `analysis.json`) for jobs needing review.
 9. Prints a concise summary.
+
+Discovery intentionally does not produce completed resumes for hundreds of discovered or rejected jobs.
 
 Example summary:
 
@@ -103,7 +105,7 @@ Show detailed deterministic reasoning for a job:
 job-agent show <job-id>
 ```
 
-Approve a job for later manual action:
+Approve a job for deliberate application preparation:
 
 ```bash
 job-agent approve <job-id>
@@ -117,18 +119,45 @@ job-agent reject <job-id>
 
 Approval records a local human decision and timestamp only. **Approval does not submit an application.** Discovery also does not apply to jobs.
 
+Prepare one approved job after review:
+
+```bash
+job-agent prepare <job-id> --profile config/candidate_profile.local.json
+```
+
+For fixture or CI testing only, `--force` bypasses the approval check. Normal use should be: `discover` → `queue`/`show` → `approve` → `prepare` → human review of the generated package.
+
 ## Generated artifacts
 
-For jobs that reach `REVIEW_REQUIRED` or `AUTO_APPLY_ELIGIBLE`, the project writes a local package containing:
+Discovery packages for `REVIEW_REQUIRED` and `AUTO_APPLY_ELIGIBLE` jobs contain only:
 
 - `job.json`
 - `analysis.json`
-- `resume_plan.json`
+
+After explicit approval, `job-agent prepare <job-id>` creates a human-reviewable application package:
+
+- `job.json`
+- `analysis.json`
+- `resume-plan.json`
 - `resume.json`
 - `resume.html`
+- `resume-provenance.json`
 - `audit.json`
+- `application-brief.md`
 
-Packages are not regenerated for the same already-created analysis path during repeated discovery, avoiding unnecessary duplicate output for unchanged jobs.
+The visual resume does not expose internal provenance IDs. `resume-provenance.json` maps each bullet to verified statement IDs, source experience, confidence, and targeted requirements for inspection. The brief summarizes employer/role, URL, compensation/work arrangement, strongest verified matches, gaps, interview topics, contact/profile completeness, and final audit status.
+
+## Private candidate profile setup
+
+Do not commit private contact details. The repository includes `config/candidate_profile.example.json` as a safe template and keeps `config/candidate_profile.local.json` gitignored for local email and phone values. Public profile facts such as Bob Elicker, `https://robertelicker.com`, and `https://www.linkedin.com/in/bob-elicker` may be stored in committed configuration, but private email and phone should be supplied locally or by environment variables:
+
+```bash
+cp config/candidate_profile.example.json config/candidate_profile.local.json
+# edit private email and phone locally
+JOB_AGENT_EMAIL='private@example.invalid' JOB_AGENT_PHONE='555-555-1212' job-agent prepare <job-id>
+```
+
+Profile validation blocks placeholder/test emails, `example.com` URLs, placeholder text, missing submission-required contact fields, and invalid profile URLs. Preparation can still create a visibly marked `DRAFT_INCOMPLETE` resume when private contact information is missing, but the final audit will not pass until contact blockers are resolved.
 
 ## Greenhouse parsing approach
 
@@ -187,7 +216,7 @@ To run it:
 7. Review the GitHub Step Summary on the workflow run page.
 8. Download the `greenhouse-live-validation-results` artifact if deeper inspection is needed.
 
-The workflow discovers and scores jobs only. It does **not** submit applications, drive a browser, call an LLM API, or require an OpenAI API key. Public Greenhouse board validation uses temporary workflow data: a generated search-preferences file, temporary SQLite database, temporary application/review artifacts, discovery logs, source-result metadata, and a machine-readable `live-validation-summary.json`. The live summary includes parsing-quality counts, explicit-requirement/responsibility counts, requirement-evaluation counts, non-zero and zero evidence-confidence counts, hard-requirement presence counts, absent scoring-dimension counts, per-component applicability diagnostics, title-only analysis counts, LOW parsing counts, actionable review counts, parsing-review counts, below-threshold-only rejection counts, near-review-threshold counts, and prominent non-fatal warnings when every fetched job parses as insufficient or no jobs produce requirements/evaluations. User-facing Top Matching Jobs contain only actionable evaluated matches with substantive explicit requirements, MEDIUM/HIGH parsing quality, requirement evaluations, and non-zero evidence confidence. Exact-title or target-family postings with failed qualification parsing are kept visible in a separate Jobs Needing Parsing Review section with the parsing quality, title alignment, diagnostic reason, and URL; unrelated rejected roles are kept in a separate highest-scoring rejected diagnostic section.
+The workflow discovers and scores jobs only. It does **not** prepare completed resumes, submit applications, drive a browser, call an LLM API, or require an OpenAI API key. Public Greenhouse board validation uses temporary workflow data: a generated search-preferences file, temporary SQLite database, temporary discovery/review artifacts (`job.json`, `analysis.json`, queue data), discovery logs, source-result metadata, and a machine-readable `live-validation-summary.json`. The live summary includes parsing-quality counts, explicit-requirement/responsibility counts, requirement-evaluation counts, non-zero and zero evidence-confidence counts, hard-requirement presence counts, absent scoring-dimension counts, per-component applicability diagnostics, title-only analysis counts, LOW parsing counts, actionable review counts, parsing-review counts, below-threshold-only rejection counts, near-review-threshold counts, and prominent non-fatal warnings when every fetched job parses as insufficient or no jobs produce requirements/evaluations. User-facing Top Matching Jobs contain only actionable evaluated matches with substantive explicit requirements, MEDIUM/HIGH parsing quality, requirement evaluations, and non-zero evidence confidence. Exact-title or target-family postings with failed qualification parsing are kept visible in a separate Jobs Needing Parsing Review section with the parsing quality, title alignment, diagnostic reason, and URL; unrelated rejected roles are kept in a separate highest-scoring rejected diagnostic section.
 
 Live boards can change or become inaccessible. A company may move away from Greenhouse, block access, return malformed data, or have no currently listed jobs. Individual source failures are reported separately in the summary and artifact metadata; they are warnings unless the application itself fails to parse configuration, create the database, run the CLI, or complete the automated tests. Zero discovered jobs is reported clearly and should not be treated as proof that the matcher produced live recommendations.
 

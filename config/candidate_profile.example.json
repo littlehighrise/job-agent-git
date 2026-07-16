@@ -1,8 +1,8 @@
 {
   "candidate_id": "bob_elicker",
   "full_name": "Bob Elicker",
-  "email": null,
-  "phone": null,
+  "email": "PLACEHOLDER_PRIVATE_EMAIL@example.com",
+  "phone": "PLACEHOLDER_PRIVATE_PHONE",
   "location": "United States",
   "portfolio_url": "https://robertelicker.com",
   "linkedin_url": "https://www.linkedin.com/in/bob-elicker",
