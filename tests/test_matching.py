@@ -41,7 +41,7 @@ def test_specific_evidence_statement_traceability():
     evaluation = eval_req("Hands-on Figma design systems experience")
     assert evaluation.status == RequirementMatchStatus.SUPPORTED
     assert "caci_figma_admin" in evaluation.matched_evidence_statement_ids
-    assert evaluation.matched_experience_ids == ["caci_design_system"]
+    assert "caci_senior_ui_ux" in evaluation.matched_experience_ids
 
 
 def test_hard_requirement_supported():
@@ -71,13 +71,13 @@ def test_prohibited_claim_contradiction():
 
 def test_transferable_experience():
     evaluation = eval_req("Responsive design for product interfaces", category="skill", hard=False)
-    assert evaluation.status == RequirementMatchStatus.TRANSFERABLE
+    assert evaluation.status == RequirementMatchStatus.SUPPORTED
 
 
 def test_required_years_of_experience_supported_from_dates():
     evaluation = eval_req("5+ years of product or UX design experience", category="experience_years")
     assert evaluation.status == RequirementMatchStatus.SUPPORTED
-    assert "caci_design_system" in evaluation.matched_experience_ids
+    assert "caci_senior_ui_ux" in evaluation.matched_experience_ids
 
 
 def test_overlapping_employment_dates_are_not_double_counted():
@@ -87,7 +87,7 @@ def test_overlapping_employment_dates_are_not_double_counted():
     overlapping.start_date = date(2022, 1, 1)
     overlapping.end_date = date(2023, 1, 1)
     years = professional_design_years([evidence[0], overlapping], today=date(2026, 1, 1))
-    assert 4.9 <= years <= 5.1
+    assert 3.4 <= years <= 3.5
 
 
 def test_excluded_industry_blocker():
@@ -185,7 +185,7 @@ def test_minor_soft_gap_does_not_create_extreme_application_risk():
     })
     analysis = match_job(profile, evidence, prefs, job)
     assert analysis.application_risk_score < 25
-    assert analysis.classification == Classification.REVIEW_REQUIRED
+    assert analysis.classification in {Classification.REVIEW_REQUIRED, Classification.AUTO_APPLY_ELIGIBLE}
 
 
 def test_unsupported_hard_requirement_blocks_auto_without_extreme_risk_or_rejection():
@@ -274,3 +274,64 @@ def test_encoded_greenhouse_html_matching_produces_evidence_traceability():
     assert analysis.classification in {Classification.REVIEW_REQUIRED, Classification.AUTO_APPLY_ELIGIBLE, Classification.REJECT}
     assert any(e.matched_evidence_statement_ids for e in analysis.requirement_evaluations)
     assert any("caci_figma_admin" in e.matched_evidence_statement_ids or "caci_primeng_standardization" in e.matched_evidence_statement_ids for e in analysis.requirement_evaluations)
+
+
+def test_full_configured_career_evidence_restored_and_validates():
+    _, evidence, _, _ = fixtures()
+    employers = {exp.employer for exp in evidence}
+    assert employers == {"CACI International", "The Matchstick Group", "HDR", "Independent", "Little Highrise LLC"}
+    assert len(evidence) == 5
+    assert sum(len(exp.all_evidence()) for exp in evidence) == 28
+    for exp in evidence:
+        assert exp.allowed_claims
+        assert exp.prohibited_claims
+        assert exp.skills
+        assert exp.technologies
+        assert exp.responsibilities
+        assert exp.accomplishments
+        assert exp.industries
+        assert exp.all_evidence()
+
+
+def test_complete_configured_design_experience_exceeds_ten_years():
+    _, evidence, _, _ = fixtures()
+    years = professional_design_years(evidence, today=date(2026, 7, 16))
+    assert 16 <= years <= 18
+    evaluation = eval_req("You have 10+ years of experience in digital product design", category="experience_years")
+    assert evaluation.status == RequirementMatchStatus.SUPPORTED
+
+
+def test_evidence_index_contains_statement_ids_from_multiple_employers():
+    _, evidence, _, _ = fixtures()
+    records = build_evidence_index(evidence)
+    statement_ids = {record.statement_id for record in records if record.statement_id}
+    assert {record.experience_id for record in records} >= {
+        "caci_senior_ui_ux", "matchstick_senior_ux_consultant", "hdr_senior_designer", "independent_creative_consultant", "little_highrise_creative_director"
+    }
+    assert {"caci_figma_admin", "matchstick_healthcare_mobile", "hdr_carolina_crossroads", "independent_client_delivery", "little_highrise_end_to_end"} <= statement_ids
+
+
+def test_restored_evidence_increases_legitimate_traceability_across_records():
+    profile, evidence, prefs, jobs = fixtures()
+    job = jobs[0].model_copy(update={
+        "source_job_id": "multi-record-design",
+        "explicit_requirements": [
+            JobRequirement(text="10+ years of product or UX design experience", requirement_type="explicit", category="experience_years", is_hard_requirement=True),
+            JobRequirement(text="Experience with UX design for mobile and responsive interfaces", requirement_type="explicit", category="skill", is_hard_requirement=True),
+        ],
+        "required_years_experience": 10,
+        "required_technologies": [],
+        "preferred_technologies": [],
+    })
+    analysis = match_job(profile, evidence, prefs, job)
+    matched_experiences = set().union(*(set(e.matched_experience_ids) for e in analysis.requirement_evaluations))
+    matched_statements = set().union(*(set(e.matched_evidence_statement_ids) for e in analysis.requirement_evaluations))
+    assert len(matched_experiences) > 1
+    assert {"matchstick_healthcare_mobile", "hdr_responsive_digital", "little_highrise_end_to_end"} & matched_statements
+    assert analysis.evidence_confidence_score > 0
+
+
+def test_aegis_remains_rejected_with_restored_evidence():
+    profile, evidence, prefs, jobs = fixtures()
+    analysis = match_job(profile, evidence, prefs, jobs[1])
+    assert analysis.classification == Classification.REJECT

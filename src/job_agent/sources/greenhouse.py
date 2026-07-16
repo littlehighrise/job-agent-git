@@ -128,7 +128,31 @@ SECTION_ALIASES = {
     "preferred qualifications": "preferred", "preferred experience": "preferred", "nice to have": "preferred", "nice-to-have": "preferred", "bonus": "preferred", "bonus points": "preferred", "it would be great if": "preferred", "while it's not required, it's an added plus if you also have": "preferred",
     "benefits": "ignore", "perks and benefits": "ignore", "compensation": "ignore", "equal opportunity": "ignore", "privacy": "ignore", "about us": "ignore", "about datadog": "ignore",
 }
-BOILERPLATE_RE = re.compile(r"\b(equal opportunity|privacy notice|we encourage you to apply|reasonable accommodation|benefits|medical dental|401\(k\)|compensation range)\b", re.I)
+IGNORED_HEADING_PATTERNS = [
+    re.compile(pattern, re.I) for pattern in [
+        r"^(?:our\s+)?benefits(?:\s+(?:and|&)\s+(?:growth|perks))?$",
+        r"^(?:employee\s+)?benefits$",
+        r"^perks$",
+        r"^what\s+we\s+offer$",
+        r"^compensation(?:\s+(?:and|&)\s+benefits)?$",
+        r"^pay\s+transparency(?:\s+disclosure)?$",
+        r"^(?:annual\s+base\s+)?salary\s+range$",
+        r"^total\s+rewards$",
+        r"^equal\s+opportunity(?:\s+employer)?$",
+        r"^diversity\s+(?:and|&)\s+inclusion$",
+        r"^accommodations?$",
+        r"^privacy\s+notice$",
+    ]
+]
+NON_QUALIFICATION_RE = re.compile(
+    r"(\bRSUs?\b|\bESPP\b|stock\s+purchase\s+plan|new\s+hire\s+stock\s+equity|"
+    r"health\s+insurance|dental\s+insurance|vision\s+insurance|medical,?\s+dental,?\s+(?:and\s+)?vision|"
+    r"401\s*\(?k\)?|paid\s+parental\s+leave|paid\s+time\s+off|employee\s+resource\s+groups?|"
+    r"wellness\s+benefits?|commuter\s+benefits?|professional\s+development\s+benefits?|"
+    r"pay\s+transparency\s+disclosure|annual\s+base\s+salary\s+range|salary\s+(?:range|disclosure))",
+    re.I,
+)
+BOILERPLATE_RE = re.compile(r"\b(equal opportunity|privacy notice|we encourage you to apply|reasonable accommodation|inclusion talks|mentor and buddy program|career pathing)\b", re.I)
 TECHS = ["Figma", "Sketch", "React", "Angular", "Vue", "TypeScript", "JavaScript", "Python", "Django", "Rails", "Ruby", "SQL", "AWS", "GCP", "Azure", "Kubernetes", "Docker", "Java", "Go", "Swift", "Kotlin"]
 HARD_PATTERNS = re.compile(r"\b(required|must have|minimum qualification|minimum qualifications|legally required|active .{0,30}clearance required|clearance required)\b", re.I)
 YEAR_PATTERNS = [re.compile(r"(\d+)\+\s*years?", re.I), re.compile(r"at least\s+(\d+)\s+years?", re.I), re.compile(r"(\d+)\s+or more years?", re.I), re.compile(r"(\d+)\s*-\s*\d+\s+years?", re.I), re.compile(r"(\d+)\s+years?", re.I)]
@@ -137,8 +161,30 @@ COUNTRIES = {"israel": "Israel", "united states": "United States", "usa": "Unite
 
 def _heading_key(line: str) -> str:
     key = _clean(line).lower().rstrip(":")
+    key = re.sub(r"[‘’]", "'", key)
+    key = re.sub(r"\s+", " ", key)
     key = re.sub(r"\s+at\s+[a-z0-9 .&'-]+$", "", key)
+    key = re.sub(r"[^a-z0-9&' ]+", "", key).strip()
     return key
+
+
+def _is_ignored_heading(key: str) -> bool:
+    return any(pattern.search(key) for pattern in IGNORED_HEADING_PATTERNS)
+
+
+def _section_alias_for(key: str) -> str | None:
+    if key in SECTION_ALIASES:
+        return SECTION_ALIASES[key]
+    for alias_key, alias in SECTION_ALIASES.items():
+        if key == _heading_key(alias_key):
+            return alias
+    return None
+
+
+def _is_non_qualification_content(text: str) -> bool:
+    if _salary(text)[:2] != (None, None):
+        return True
+    return bool(NON_QUALIFICATION_RE.search(text) or BOILERPLATE_RE.search(text))
 
 def _extract_years(text: str) -> int | None:
     for pat in YEAR_PATTERNS:
@@ -167,11 +213,12 @@ def parse_greenhouse_description(description: str) -> dict[str, Any]:
     current: str | None = None; recognized = 0
     for raw in lines:
         if not raw: continue
-        alias = SECTION_ALIASES.get(_heading_key(raw))
-        if alias:
-            current = None if alias == "ignore" else alias; recognized += 1; continue
+        key = _heading_key(raw)
+        alias = _section_alias_for(key)
+        if alias or _is_ignored_heading(key):
+            current = None if alias == "ignore" or _is_ignored_heading(key) else alias; recognized += 1; continue
         bullet = _clean(re.sub(r"^[•*\-–]+", "", raw))
-        if not bullet or current is None or BOILERPLATE_RE.search(bullet): continue
+        if not bullet or current is None or _is_non_qualification_content(bullet): continue
         sections[current].append(bullet)
 
     explicit: list[JobRequirement] = []; inferred: list[JobRequirement] = []
